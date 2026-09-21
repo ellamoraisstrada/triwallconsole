@@ -1,0 +1,25 @@
+# Local state. One scene, one machine — never shared, and it carries the
+# paths of whatever is loaded on this box. A second server pointed at the
+# same state.json will fight this one; use TRIWALL_STATE instead.
+state.json
+state-*.json
+state.backup-*.json
+
+# Working media. Plates, generated stills and clips, client reference
+# footage. Generations live on Higgsfield and are streamed by the Library
+# tab, so nothing here needs to be in the repo — and client material must
+# not leave the studio in a git remote.
+uploads/
+outputs/
+refs/
+reference-renders/
+
+# Rating history and liked-example exports: per-scene working data.
+knowledge/
+
+node_modules/
+npm-debug.log*
+*.log
+
+.DS_Store
+Thumbs.db
