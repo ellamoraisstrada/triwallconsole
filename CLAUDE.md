@@ -19,3 +19,9 @@ Read `README.md` first — it is the full brief, and it is short.
    working scene.
 7. `theatre.js` is the source of truth for geometry; `rigspec.js` for numbers.
    One place per fact.
+8. **No change lives in only one version.** This tool exists in more than one
+   place at once (this repo, the skill's own local app copy, any other
+   checkout) — don't patch just whichever instance happens to be running.
+   Develop and prepare every change so it can be synced across via git
+   (commit here, port to the other locations) instead of hand-editing one
+   live copy and leaving the rest to drift.
