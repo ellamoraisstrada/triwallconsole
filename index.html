@@ -450,8 +450,8 @@
       <button class="btn small" id="rigApplyBtn" title="Write this move into all three walls' locked rules">Apply preset</button>
     </div>
     <div class="f" id="rigSpeedWrap">
-      <label title="How fast the move should READ in the real space - written into the contract as camera.ground_speed_kmh so the world does not go past at a pace that looks wrong for the room. It does not set how far the picture travels: that total is measured off the reference render, and Clip seconds below decides how fast it is covered.">Speed km/h</label>
-      <input type="number" id="rigSpeed" value="15" min="1" step="1">
+      <label title="How fast the camera moves, as a percentage of the reference clips. 100% is the measured average of the six L_/R_ reference clips - 8.48% of the frame width per second on a side wall. This is a RATE: the picture travels speed x duration, so the same speed covers proportionally more ground in a 15s clip than a 4s one. Double it to 200% and the camera moves twice as fast.">Speed %</label>
+      <input type="number" id="rigSpeed" value="100" min="1" max="1000" step="5">
     </div>
     <div class="f" id="rigYawWrap" style="display:none;">
       <label>Yaw °/sec</label>
@@ -475,6 +475,24 @@
 .libmeta { padding:7px 9px; font-family:var(--mono); font-size:10.5px; line-height:1.6; color:var(--muted); }
 .libmeta strong { color:var(--accent); font-weight:400; }
 .libmeta a { color:var(--muted); }
+/* THE RATING IS THE ARROW, AND NOTHING ELSE.
+   Unrated rows say nothing at all - the two arrows sit dim and identical, so
+   anything coloured in a grid of 90-odd clips is something you judged. Up is
+   green, down is red, and only the arrow that was actually pressed lights up.
+   `.on` is put on whichever button matches the row's rating, so these two
+   rules cannot both fire. Before this there was no .librateb CSS at all: the
+   class was applied and styled nothing, which is why a rated clip looked
+   exactly like an unrated one.
+   Selectors are deliberately over-qualified: `.btn.ghost` is (0,2,0) and its
+   hover rule is (0,4,0), so a plain `.librateb` rule loses to both and a
+   hovered red arrow would turn teal. These sit above them. */
+.btn.ghost.librateb { color:var(--muted-dim); border-color:var(--line); background:transparent; }
+.btn.ghost.librateb.on[data-rating="up"],
+.btn.ghost.librateb.on[data-rating="up"]:hover:not(:disabled) {
+  color:#3FD97A; border-color:#3FD97A; background:rgba(63,217,122,.14); }
+.btn.ghost.librateb.on[data-rating="down"],
+.btn.ghost.librateb.on[data-rating="down"]:hover:not(:disabled) {
+  color:var(--danger); border-color:var(--danger); background:var(--danger-wash); }
 .rig-speed-readout { margin: 8px 0 0; }
 .rig-speed-readout .rsr-head { color: var(--muted); font-size: 11px; line-height: 1.55; margin-bottom: 6px; }
 table.rsr { border-collapse: collapse; font-family: var(--mono); font-size: 10.5px; line-height: 1.6; }
@@ -1625,8 +1643,9 @@ const LIBRARY_MARKUP = `
       <div class="f"><label>Wall</label>
         <select id="libWall"><option value="all">all three</option><option value="left">left</option><option value="center">center</option><option value="right">right</option></select></div>
       <div class="f"><label>Rating</label>
-        <select id="libRating"><option value="all">any</option><option value="up">liked</option><option value="down">rejected</option><option value="none">unrated</option></select></div>
+        <select id="libRating"><option value="all">any</option><option value="rated">rated (either way)</option><option value="up">liked</option><option value="down">rejected</option><option value="none">unrated</option></select></div>
       <div class="f"><label>&nbsp;</label><button class="btn ghost small" id="libRefresh">Refresh</button></div>
+      <div class="f"><label>&nbsp;</label><button class="btn ghost small" id="libRebuild" title="Generations made before this tab existed are not in the local record, but they are still on your Higgsfield account. This pulls them back in, reading the wall and the move out of each job's own prompt. It only adds - nothing already here, including ratings, is changed.">Recover from account</button></div>
       <div class="f"><label>&nbsp;</label><span id="libCount" style="font-family:var(--mono);font-size:11px;color:var(--muted-dim);align-self:center;"></span></div>
     </div>
     <div id="libGrid" class="libgrid"></div>
@@ -1645,7 +1664,9 @@ async function refreshLibrary(){
   const shown = rows.filter(r => (kind === 'all' || r.kind === kind)
                               && (wall === 'all' || r.wall === wall)
                               && (rating === 'all'
-                                  || (rating === 'none' ? !r.rating : r.rating === rating)));
+                                  || (rating === 'none' ? !r.rating
+                                      : rating === 'rated' ? !!r.rating
+                                      : r.rating === rating)));
   document.getElementById('libCount').textContent =
     shown.length + ' of ' + rows.length + (rows.length === 1 ? ' generation' : ' generations');
 
@@ -1682,6 +1703,18 @@ async function refreshLibrary(){
 }
 
 document.addEventListener('click', async (e) => {
+  if (e.target.id === 'libRebuild') {
+    const btn = e.target, was = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Reading account…';
+    try {
+      const d = await api('/api/library-rebuild', { method:'POST' });
+      document.getElementById('libCount').textContent = d.summary || '';
+      await refreshLibrary();
+    } catch (err) {
+      document.getElementById('libCount').textContent = err.message;
+    } finally { btn.disabled = false; btn.textContent = was; }
+    return;
+  }
   const rb = e.target.closest('.librateb');
   if (rb) {
     try {
@@ -2470,7 +2503,7 @@ function readRigFromForm(){
   const subject = el('rigElement').value.trim();
   return {
     intent: el('rigIntent').value,
-    speedKmh: Math.max(1, parseFloat(el('rigSpeed').value) || 15),
+    speedPct: Math.max(1, parseFloat(el('rigSpeed').value) || 100),
     yawDegPerSec: Math.max(0.1, parseFloat(el('rigYaw').value) || 6),
     tiltDegPerSec: Math.max(0.1, parseFloat(el('rigTilt').value) || 4),
     durationSec: Math.max(1, parseInt(el('rigDuration').value, 10) || 5),
@@ -2489,7 +2522,7 @@ function writeRigToForm(rig){
   if (!rig) return;
   const el = id => document.getElementById(id);
   el('rigIntent').value = RIGMOVE_NORMALISE(rig.intent);
-  el('rigSpeed').value = rig.speedKmh ?? 15;
+  el('rigSpeed').value = rig.speedPct ?? 100;
   el('rigYaw').value = rig.yawDegPerSec ?? 6;
   el('rigTilt').value = rig.tiltDegPerSec ?? 4;
   el('rigDuration').value = rig.durationSec ?? 5;

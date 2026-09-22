@@ -213,7 +213,11 @@ function amplitudeLine() { return ''; }
 // to recognise them if a client clip contains one - but they are not offered in
 // the picker, because they are not moves this show uses. Narrowing the list also
 // narrows the ways a generation can go wrong.
-const PRESET_IDS = ['C_PushIn', 'C_PushOut', 'C_TrackLeft', 'C_TrackRight', 'C_Hold'];
+// The two moves the show offers. Track, Turn, Tilt and Hold stay in MOVES —
+// ids() still returns them so the decoder can name a move it sees in client
+// footage, and so saved state naming one still resolves — they are just not
+// offered as presets any more.
+const PRESET_IDS = ['C_PushIn', 'C_PushOut'];
 
 // Old intent ids, kept working. State saved by an earlier version still loads,
 // and the decoder's heuristic classifier still speaks this vocabulary.
