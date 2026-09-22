@@ -104,7 +104,7 @@ function cameraTrack(wallId, rig) {
   const dur = (rig && rig.durationSec) || 5;
   const NL2 = String.fromCharCode(10) + String.fromCharCode(10);
 
-  const block = RIGSPEC.numericBlock(moveId, wallId, dur, rig && rig.speedPct);
+  const block = RIGSPEC.numericBlock(moveId, wallId, dur, rig && rig.speedPct, rig && rig.centrePct);
 
   // A decoded reference only ever overrides the TEMPO, never the geometry:
   // the geometry is the room's, the tempo is the client's.
@@ -122,9 +122,9 @@ function cameraTrack(wallId, rig) {
 // own block uses, so the two can never disagree — which the previous prose
 // version did, describing "no camera motion at all" on all five walls for
 // months because a rename left its lookup table behind.
-function allWallsTable(moveId, durationSec, speedPct) {
+function allWallsTable(moveId, durationSec, speedPct, centrePct) {
   const NL = String.fromCharCode(10);
-  const rows = RIGSPEC.inspector(moveId, durationSec || 5, speedPct);
+  const rows = RIGSPEC.inspector(moveId, durationSec || 5, speedPct, centrePct);
   const lines = ['THE WHOLE RIG — one camera, one move, all three walls. Your wall is one view of this:'];
   lines.push('  wall     frame          dx over clip    scale over clip   direction');
   for (const r of rows) {
@@ -349,6 +349,7 @@ function buildLockedJson(wallId, rig, extras) {
   // still govern - see rigspec.cameraJson.
   const base = RIGSPEC.cameraJson(moveId, wallId, dur, {
     speedPct: rig && Number(rig.speedPct),
+    centrePct: rig && Number(rig.centrePct),
   });
 
   // ONE line about the room, not a section. The contract carried a room
@@ -377,7 +378,7 @@ function buildLockedBlock(wallId, rig, measuredRule) {
   const moveId = RIGSPEC.normalise(rig && (rig.move || rig.intent));
   const dur = (rig && rig.durationSec) || 5;
   const parts = [THEATRE.roomBrief(wallId), THEATRE_PRINCIPLES, cameraTrack(wallId, rig),
-                 allWallsTable(moveId, dur, rig && rig.speedPct), perspective(wallId), noInvention(wallId)];
+                 allWallsTable(moveId, dur, rig && rig.speedPct, rig && rig.centrePct), perspective(wallId), noInvention(wallId)];
   if (measuredRule) parts.push(measuredRule);
   return parts.join(String.fromCharCode(10) + String.fromCharCode(10));
 }

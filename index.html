@@ -465,6 +465,10 @@
       <label title="How fast the camera moves, as a percentage of the reference clips. 100% is the measured average of the six L_/R_ reference clips - 8.48% of the frame width per second on a side wall. This is a RATE: the picture travels speed x duration, so the same speed covers proportionally more ground in a 15s clip than a 4s one. Double it to 200% and the camera moves twice as fast.">Speed %</label>
       <input type="number" id="rigSpeed" value="100" min="1" max="1000" step="5">
     </div>
+    <div class="f" id="rigCentreWrap">
+      <label title="Trims the CENTRE wall only, on top of Speed %. The centre does not obey the speed dial the way the sides do - measured over three delivered sets it overshot its scale by 3-9x while the sides tracked what they were asked - so one dial cannot make both look right. 100% keeps the reference ratio between centre and sides; lower slows the centre without touching the sides.">Centre %</label>
+      <input type="number" id="rigCentre" value="100" min="1" max="400" step="5">
+    </div>
     <div class="f" id="rigYawWrap" style="display:none;">
       <label>Yaw °/sec</label>
       <input type="number" id="rigYaw" value="6" min="0.1" step="0.1">
@@ -2547,6 +2551,7 @@ function rigFieldVisibility(intent){
   const held = intent === 'C_Hold' || intent === 'hold';
   const moves = !rot && !tilt && !held;
   document.getElementById('rigSpeedWrap').style.display = moves ? 'flex' : 'none';
+  document.getElementById('rigCentreWrap').style.display = moves ? 'flex' : 'none';
   document.getElementById('rigYawWrap').style.display = rot ? 'flex' : 'none';
   document.getElementById('rigTiltWrap').style.display = tilt ? 'flex' : 'none';
 }
@@ -2557,6 +2562,7 @@ function readRigFromForm(){
   return {
     intent: el('rigIntent').value,
     speedPct: Math.max(1, parseFloat(el('rigSpeed').value) || 100),
+    centrePct: Math.max(1, parseFloat(el('rigCentre').value) || 100),
     yawDegPerSec: Math.max(0.1, parseFloat(el('rigYaw').value) || 6),
     tiltDegPerSec: Math.max(0.1, parseFloat(el('rigTilt').value) || 4),
     durationSec: Math.max(1, parseInt(el('rigDuration').value, 10) || 5),
@@ -2576,6 +2582,7 @@ function writeRigToForm(rig){
   const el = id => document.getElementById(id);
   el('rigIntent').value = RIGMOVE_NORMALISE(rig.intent);
   el('rigSpeed').value = rig.speedPct ?? 100;
+  el('rigCentre').value = rig.centrePct ?? 100;
   el('rigYaw').value = rig.yawDegPerSec ?? 6;
   el('rigTilt').value = rig.tiltDegPerSec ?? 4;
   el('rigDuration').value = rig.durationSec ?? 5;
@@ -2641,6 +2648,10 @@ async function pushRig(){
 // visibly changes the prompt rather than only the state.
 document.getElementById('rigSpeed')
   .addEventListener('change', () => pushSpeed().catch(() => {}));
+// The centre trim rides the same path as Speed: push it, then re-read the
+// inspector, so the centre's scale figure visibly changes as you turn it.
+document.getElementById('rigCentre')
+  .addEventListener('change', () => pushSpeed().catch(() => {}));
 document.getElementById('rigDuration')
   .addEventListener('change', () => pushDuration().catch(() => {}));
 
@@ -2649,7 +2660,7 @@ document.getElementById('rigDuration')
 // only after Apply. Until Apply is pressed the panel says so, in as many words
 // - which is the difference between "the preset did nothing" and "the preset
 // was never sent".
-['rigIntent','rigDuration'].forEach(id =>
+['rigIntent','rigDuration','rigCentre'].forEach(id =>
   document.getElementById(id).addEventListener('change', () => {
     refreshPresetDebug().catch(() => {});
   }));

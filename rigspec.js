@@ -247,7 +247,7 @@ function round(x, n) { const f = Math.pow(10, n); return Math.round(x * f) / f; 
  * Everything downstream — prompt text, inspector, verifier — reads this, so
  * there is exactly one place where a number can be wrong.
  */
-function spec(moveId, wallId, durationSec, speedPct) {
+function spec(moveId, wallId, durationSec, speedPct, centrePct) {
   const id = normalise(moveId);
   const m = MOVES[id];
   const w = wallKey(wallId);
@@ -264,7 +264,23 @@ function spec(moveId, wallId, durationSec, speedPct) {
   // rate is what lets one speed mean the same thing at 4 s and at 15 s; the
   // ratios between the three walls are untouched, so the rig still moves as
   // one body however hard it is driven.
-  const g = gestureFraction(speedPct, T);
+  // THE CENTRE GETS ITS OWN TRIM, because it does not obey like the sides do.
+  //
+  // Measured over three delivered sets: the side walls tracked what they were
+  // asked (delivered/asked 1.44, 0.84, 1.71 - mean 1.33), while the centre
+  // overshot its scale by 3-9x and its delivered rate barely moved with the
+  // ask at all (asked ~1.017/s every time; delivered 1.05, 1.16, 1.17/s, which
+  // tracks DURATION, not the number it was given). One dial cannot serve two
+  // walls that respond that differently: set it so the sides look right and the
+  // centre runs hot, set it so the centre looks right and the sides crawl.
+  //
+  // So `centrePct` trims the centre alone, on top of the main speed. 100 means
+  // "keep the reference ratio between centre and sides"; lower slows the centre
+  // without touching the sides. It multiplies the gesture fraction, so it acts
+  // on the centre's scale exponent and stays consistent at every duration.
+  const cp = Number(centrePct);
+  const centreTrim = (w === 'center' && Number.isFinite(cp) && cp > 0) ? cp / 100 : 1;
+  const g = gestureFraction(speedPct, T) * centreTrim;
   const dxTotal = raw.dx * conv * g;
   const dxRate = dxTotal / T;                       // frame-widths per second
   const dyTotal = raw.dy * (MASTER_H / WALL_H[w]) * g;
@@ -351,8 +367,8 @@ function pct(x) { return (x >= 0 ? '+' : '') + (x * 100).toFixed(1) + '%'; }
  * The block the locked prompt carries. Numbers first, prose only to say what
  * the numbers mean.
  */
-function numericBlock(moveId, wallId, durationSec, speedPct) {
-  const sp = spec(moveId, wallId, durationSec, speedPct);
+function numericBlock(moveId, wallId, durationSec, speedPct, centrePct) {
+  const sp = spec(moveId, wallId, durationSec, speedPct, centrePct);
   const NL = String.fromCharCode(10);
   const L = [];
   const wallName = sp.wall === 'center' ? 'CENTRE WALL' : sp.wall.toUpperCase() + ' WALL';
@@ -506,9 +522,9 @@ function cameraGloss(sp) {
   };
 }
 
-function inspector(moveId, durationSec, speedPct) {
+function inspector(moveId, durationSec, speedPct, centrePct) {
   return ['left', 'center', 'right'].map(w => {
-    const sp = spec(moveId, w, durationSec, speedPct);
+    const sp = spec(moveId, w, durationSec, speedPct, centrePct);
     return {
       wall: w,
       framePx: sp.framePx + ' x ' + sp.frameH,
@@ -549,8 +565,8 @@ function inspector(moveId, durationSec, speedPct) {
  * bgRatio, durationSec - all in the delivered clip's own frame units, which is
  * exactly what spec() states.
  */
-function compare(moveId, wallId, measured, speedPct) {
-  const want = spec(moveId, wallId, measured.durationSec || 5, speedPct);
+function compare(moveId, wallId, measured, speedPct, centrePct) {
+  const want = spec(moveId, wallId, measured.durationSec || 5, speedPct, centrePct);
   const row = { wall: wallId, problems: [], want: want };
 
   row.dx = { want: want.dxTotal, got: measured.dxTotal };
@@ -752,7 +768,7 @@ function sizeWords(scaleTotal) {
  * still in the inspector; it was never something the generator could act on.
  */
 function cameraJson(moveId, wallId, durationSec, opts) {
-  const sp = spec(moveId, wallId, durationSec, opts && opts.speedPct);
+  const sp = spec(moveId, wallId, durationSec, opts && opts.speedPct, opts && opts.centrePct);
   const zooms = Math.abs(sp.scaleTotal - 1) >= 0.15;
   const scaleEnd = zooms ? sp.scaleTotal : 1.0;
   const sz = sizeWords(scaleEnd);
@@ -847,12 +863,72 @@ function cameraJson(moveId, wallId, durationSec, opts) {
     };
   }
 
+  // THE RIGHT WALL KEEPS TRAVELLING THE SAME WAY AS THE LEFT ONE.
+  //
+  // Measured across three delivered sets (Snow, Toronto, Bear): the LEFT wall
+  // obeyed its direction every time, and the RIGHT wall travelled the SAME way
+  // as the left every time - asked +0.130 got -0.018, asked +0.162 got -0.364,
+  // asked +0.081 got -0.179. Three for three, wrong way. Reversing it in the
+  // edit is not a fix: it runs the scene's own animation backwards too, so a
+  // walking animal walks backwards.
+  //
+  // EACH JOB SEES ONE IMAGE AND ONE PROMPT. Nothing else is uploaded - not the
+  // other walls' plates, not their prompts, not their clips. So a rule phrased
+  // as "the other side wall goes the opposite way" is unusable: there is no
+  // other wall in front of the model to be opposite TO. A first version of this
+  // field said exactly that and would have been dead text.
+  //
+  // What IS in front of it is the reference image, and that image already
+  // carries the answer, because the two side walls are mirrored in PERSPECTIVE:
+  // the left wall recedes toward its RIGHT edge, the right wall toward its
+  // LEFT. Anchoring travel to the visible vanishing direction therefore comes
+  // out mirrored on its own, from a rule that only ever talks about this one
+  // frame. Same reason `perspective` works and never needed a sibling either.
+  if (sp.wall !== 'center' && sp.towardEdge) {
+    out.direction_from_perspective =
+      'Read the direction off this image: the world recedes toward its ' + sp.seamEdge
+      + ' edge and the nearest, largest things sit at its ' + sp.outerEdge + ' edge. '
+      + (sp.towardSeam
+          ? 'The picture travels INTO that depth, toward the far ' + sp.seamEdge + ' end.'
+          : 'The picture travels OUT of that depth, off the near ' + sp.outerEdge + ' end - the closest '
+            + 'things leave frame first.');
+  }
+
   if (sp.wall !== 'center') {
     out.perspective = 'a flat side plane at 90 degrees to the centre wall, seen from one seat in the '
       + 'middle of the room. The world recedes toward the '
       + (sp.wall === 'left' ? 'RIGHT' : 'LEFT') + ' edge and is nearest and largest at the '
       + (sp.wall === 'left' ? 'LEFT' : 'RIGHT') + ' edge. This never changes during the shot.';
   }
+
+  // THE OTHER TWO WALLS, AS NUMBERS.
+  //
+  // Each wall is a separate job: one image and one prompt go up, and nothing
+  // else - not the other walls' plates, not their prompts, not their finished
+  // clips. So the only way this job can know what it has to cut together with
+  // is to be TOLD, in figures. The prose block has carried an all-walls table
+  // for a long time, but prose is not what gets sent; this is the same table in
+  // the contract that is.
+  //
+  // Deliberately numbers and nothing else: no scene description, no subject, no
+  // style. Describing another wall's CONTENT is how a wall ends up drawing its
+  // neighbour's subject, which is the failure IMAGE_MODE 'extension' exists to
+  // stop. Direction and magnitude are safe to share; content is not.
+  const others = ['left', 'center', 'right'].filter(w => w !== sp.wall);
+  out.rig_context = {
+    note: 'The other two walls are separate jobs you are not shown. Figures only, so your clip cuts '
+        + 'together with theirs as one move. Draw your own frame only, never their content.',
+  };
+  for (const w of others) {
+    const o = spec(sp.move, w, sp.durationSec, opts && opts.speedPct, opts && opts.centrePct);
+    const oz = Math.abs(o.scaleTotal - 1) >= 0.15;
+    out.rig_context[w] = {
+      dx_total: o.dxTotal,
+      travel: o.towardEdge ? 'toward its ' + o.towardEdge + ' edge' : 'no sideways travel',
+      scale_end: oz ? round(o.scaleTotal, 3) : 1.0,
+    };
+  }
+  out.rig_context.your_wall = sp.wall;
 
   out.never = negativePrompt(sp);
   return out;
