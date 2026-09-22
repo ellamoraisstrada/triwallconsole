@@ -155,7 +155,7 @@ function defaultState() {
   });
   return {
     scene: '', imageModel: null, videoModel: null, editModel: null,
-    videoMotionMode: 'moving', videoCameraSpeedPct: 100, imageCompositionMode: 'extension',
+    videoMotionMode: 'moving', videoCameraSpeedPct: 100, imageCompositionMode: 'distinct',
     // The rig spec replaces the old per-wall independent movement rules: ONE
     // physical camera intent that derives all three walls' locked blocks.
     // videoMotionMode is kept as-is so nothing that read it breaks; 'idle'
@@ -181,14 +181,6 @@ if (fs.existsSync(STATE_FILE)) {
     merged.rig.element = Object.assign(RIG.defaultRig().element, (saved.rig || {}).element || {});
     merged.calibration = Object.assign(LEARN.emptyCalibration(), saved.calibration || {});
     merged.history = Object.assign(LEARN.emptyHistory(), saved.history || {});
-    // One-time migration: 'distinct' was the old default and is the mode that
-    // produced side walls containing a copy of the centre's own billboard. A
-    // saved state carrying it is almost certainly inheriting the default rather
-    // than expressing a choice, so move it to 'extension'. Anyone who genuinely
-    // wants distinct can re-pick it and that choice will stick.
-    if (merged.imageCompositionMode === 'distinct' && !saved.imageCompositionModeChosen) {
-      merged.imageCompositionMode = 'extension';
-    }
     // Object.assign only merges TOP-LEVEL keys — `walls` is itself one such
     // key, so a saved `walls` object (written before some newer per-wall
     // field, e.g. editPrompt or startFramePath, existed) would otherwise
@@ -358,7 +350,7 @@ function centreReferenceChanged(filePath){
 }
 
 function rigLockPayload(applied){
-  const mode = state.imageCompositionMode || 'extension';
+  const mode = state.imageCompositionMode || 'distinct';
   return {
     // The IMAGE locked block is now built server-side from the same principles
     // as the video one. It used to be assembled in the page, which is how the
@@ -970,7 +962,7 @@ const server = http.createServer(async (req, res) => {
       if (body.videoCameraSpeedPct !== undefined) state.videoCameraSpeedPct = body.videoCameraSpeedPct;
       if (body.imageCompositionMode !== undefined) {
         state.imageCompositionMode = body.imageCompositionMode;
-        state.imageCompositionModeChosen = true;   // an explicit pick survives migration
+        state.imageCompositionModeChosen = true;   // marks this as a real pick, not just the default
       }
       saveState();
       return sendJson(res, 200, { ok: true });

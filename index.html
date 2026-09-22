@@ -350,10 +350,10 @@
         <input type="checkbox" id="imgLinkSettings" checked style="width:auto;accent-color:var(--accent);">
         link settings across walls
       </label>
-      <select id="imageCompositionMode" style="width:auto;" title="How the side walls relate to the centre. Extension is the default: same world continues, but the centre's hero element never repeats.">
+      <select id="imageCompositionMode" style="width:auto;" title="How the side walls relate to the centre. Distinct is the default: each wall its own separate composition, sharing the reference's world, style, light and palette but not its framing.">
         <option value="extension">Extension — same world continues, centre's subject does not repeat</option>
         <option value="panoramic">Panoramic — one photo sliced in three, everything continues</option>
-        <option value="distinct">Distinct — each wall its own separate composition</option>
+        <option value="distinct" selected>Distinct — each wall its own separate composition</option>
       </select>
       <label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);"
              title="No Higgsfield model exposes a seed, so two sides generated from one centre drift apart in style. This anchors the right wall to the finished left one as well as to the centre — the nearest equivalent to a shared seed.">
@@ -941,6 +941,10 @@ async function clearWallImage(id){
   setPill('img', id, 'idle');
   setPill('vid', id, 'idle');
   setPill('refine', id, 'idle');
+  // /api/clear-image only touches genImageUrl (not genVideoUrl), so only the
+  // img/refine ratings - which are on that same image - are stale now.
+  clearWallRating('img', id);
+  clearWallRating('refine', id);
   const imgStatusEl = document.getElementById(`imgstatus-${id}`);
   if (imgStatusEl) imgStatusEl.textContent = '';
   document.getElementById(`vidstatus-${id}`).textContent = '';
@@ -2238,6 +2242,10 @@ document.getElementById('genjutsuFixBtn').addEventListener('click', async () => 
       resultEl.innerHTML = `<video controls src="${result.url}"></video>`;
       state = await api('/api/state');
       setPill('vid', badWall, 'completed');
+      // This REPLACES badWall's existing video (see /api/genjutsu-fix) same as
+      // any other regenerate - the old clip's Like/Unlike must not stay
+      // highlighted under the new one. See clearWallRating.
+      clearWallRating('vid', badWall);
       document.getElementById(`vidresult-${badWall}`).innerHTML = `<video controls src="${result.url}"></video>`;
     } else if (result.timedOut) {
       statusEl.className = 'statusline';
@@ -3906,6 +3914,12 @@ async function generateRefine(id){
     }
     state = await api('/api/state');
     renderHistory().catch(() => {});
+    // The edit result replaces genImageUrl in place - the same field both
+    // this card and the main Image card rate - so a stale Like/Unlike from
+    // before the edit must not stay highlighted under a result nobody has
+    // judged yet. See clearWallRating.
+    clearWallRating('img', id);
+    clearWallRating('refine', id);
     refreshWallImageDisplays(id);
     document.getElementById(`imgapprove-${id}`).style.display = result.url ? 'block' : 'none';
     document.getElementById(`refineapprove-${id}`).style.display = result.url ? 'block' : 'none';

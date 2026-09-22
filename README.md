@@ -296,8 +296,10 @@ touched by this — only the model-parameter fields.
 
 ## 7. Image composition modes
 
-Three modes, chosen globally: **extension** (default, assembled from
-`principles.imageComposition`), **panoramic** and **distinct**.
+Three modes, chosen globally: **extension** (assembled from
+`principles.imageComposition`), **panoramic** and **distinct** (default —
+each wall its own separate composition, sharing the reference's world, style,
+light and palette but not its framing).
 
 Panoramic and distinct return the owner's own wording **verbatim** from
 `IMAGE_MODE_VERBATIM` in `principles.js` — no room brief, no principles
