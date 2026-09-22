@@ -44,8 +44,8 @@ const ONE_RIG =
 // The parallax expectation — the theatre's core correctness test, and the one
 // failure that text alone kept producing (a zoom instead of a move).
 const PARALLAX =
-  'PARALLAX IS THE TEST. Near things must cross frame visibly faster than distant ones. If the whole '
-+ 'frame scales or slides as one piece, that is a zoom or a pan and it is wrong.';
+  'PARALLAX IS THE TEST. Near things must cross frame visibly faster than distant ones. If near and '
++ 'far shift by the same amount, that is a zoom or a pan and it is wrong.';
 
 // Energy law, from the Runbook. The sides are in peripheral vision, which
 // resolves detail poorly but is MORE sensitive to flicker than the fovea, so
@@ -104,7 +104,7 @@ function cameraTrack(wallId, rig) {
   const dur = (rig && rig.durationSec) || 5;
   const NL2 = String.fromCharCode(10) + String.fromCharCode(10);
 
-  const block = RIGSPEC.numericBlock(moveId, wallId, dur);
+  const block = RIGSPEC.numericBlock(moveId, wallId, dur, rig && rig.speedPct);
 
   // A decoded reference only ever overrides the TEMPO, never the geometry:
   // the geometry is the room's, the tempo is the client's.
@@ -122,9 +122,9 @@ function cameraTrack(wallId, rig) {
 // own block uses, so the two can never disagree — which the previous prose
 // version did, describing "no camera motion at all" on all five walls for
 // months because a rename left its lookup table behind.
-function allWallsTable(moveId, durationSec) {
+function allWallsTable(moveId, durationSec, speedPct) {
   const NL = String.fromCharCode(10);
-  const rows = RIGSPEC.inspector(moveId, durationSec || 5);
+  const rows = RIGSPEC.inspector(moveId, durationSec || 5, speedPct);
   const lines = ['THE WHOLE RIG — one camera, one move, all three walls. Your wall is one view of this:'];
   lines.push('  wall     frame          dx over clip    scale over clip   direction');
   for (const r of rows) {
@@ -348,7 +348,7 @@ function buildLockedJson(wallId, rig, extras) {
   // as a scene-scale reading of the same move. The measured frame figures
   // still govern - see rigspec.cameraJson.
   const base = RIGSPEC.cameraJson(moveId, wallId, dur, {
-    groundSpeedKmh: rig && Number(rig.speedKmh),
+    speedPct: rig && Number(rig.speedPct),
   });
 
   // ONE line about the room, not a section. The contract carried a room
@@ -377,7 +377,7 @@ function buildLockedBlock(wallId, rig, measuredRule) {
   const moveId = RIGSPEC.normalise(rig && (rig.move || rig.intent));
   const dur = (rig && rig.durationSec) || 5;
   const parts = [THEATRE.roomBrief(wallId), THEATRE_PRINCIPLES, cameraTrack(wallId, rig),
-                 allWallsTable(moveId, dur), perspective(wallId), noInvention(wallId)];
+                 allWallsTable(moveId, dur, rig && rig.speedPct), perspective(wallId), noInvention(wallId)];
   if (measuredRule) parts.push(measuredRule);
   return parts.join(String.fromCharCode(10) + String.fromCharCode(10));
 }

@@ -155,7 +155,7 @@ function defaultState() {
   });
   return {
     scene: '', imageModel: null, videoModel: null, editModel: null,
-    videoMotionMode: 'moving', videoCameraSpeedKmh: 15, imageCompositionMode: 'extension',
+    videoMotionMode: 'moving', videoCameraSpeedPct: 100, imageCompositionMode: 'extension',
     // The rig spec replaces the old per-wall independent movement rules: ONE
     // physical camera intent that derives all three walls' locked blocks.
     // videoMotionMode is kept as-is so nothing that read it breaks; 'idle'
@@ -601,9 +601,10 @@ function buildVideoInstruction(wall, currentPrompt, scene, imagePath, allImages)
 + JSON.stringify(locked, null, 2)
 + NL + NL
 + 'WHY THIS IS STRICT. Delivered sets have failed five ways, all avoidable: a wall travelled the '
-+ 'wrong way; a wall travelled three times too far; a wall zoomed when told to slide; a wall grew '
-+ 'furniture, confetti and characters that were never in the plate; and a wall slid its foreground '
-+ 'over a completely frozen background. Your job is to describe what IS there precisely enough that '
++ 'wrong way; a wall travelled three times too far; a wall zoomed when the picture was meant to '
++ 'travel at a fixed size; a wall grew furniture, confetti and characters that were never in the '
++ 'plate; and a wall carried its foreground across a completely frozen background. Your job is to '
++ 'describe what IS there precisely enough that '
 + 'the generator has nothing left to invent, and to sort it by depth so the parallax is possible.'
 + imageNote
 + NL + NL
@@ -627,8 +628,12 @@ function buildVideoInstruction(wall, currentPrompt, scene, imagePath, allImages)
 + 'horizon, a wall surface, a light colour). Name a shared object only if one genuinely appears in '
 + 'both frames; otherwise leave it empty.'
 + NL + '  ambient_motion  - ONLY things plainly visible in this image that would move on their own '
-+ 'if the shot were live. Leave it empty if there are none. Never add snow, rain, confetti, '
-+ 'sparkles, embers, particles, birds, people or vehicles that are not already there.'
++ 'if the shot were live, and ONLY as motion in place: something may sway, ripple, flicker, turn or '
++ 'breathe where it stands. Nothing here may travel across the frame or change its position in the '
++ 'scene - carrying the picture is the camera\'s job alone, and an element that moves against it is '
++ 'the single defect this contract exists to prevent. Leave it empty if there are none. Never add '
++ 'snow, rain, confetti, sparkles, embers, particles, birds, people or vehicles that are not '
++ 'already there.'
 + NL + '  notes           - only a genuine problem, at most one sentence.'
 + NL + NL
 + 'HARD RULES. Every value must be grounded in the reference images; never name something that is '
@@ -701,9 +706,28 @@ const cliQueues = {};
 // The client already prefixes a sentence for this reason. This is the backstop
 // and it lives in one function used by every path that sends a --prompt,
 // because two of the three paths did not have it.
+// MEASURED against higgsfield 1.1.25 with `generate cost` (free, same
+// validation as create). The CLI coerces ANY value that JSON-parses, not just
+// one starting with "{":
+//
+//     'a cat on a sofa'        -> OK, 28 credits
+//     'a scene with {braces}'  -> OK, 28 credits
+//     '{"a":1}'                -> Invalid types: prompt should be string, got object
+//     '   {"a":1}'             -> got object   (leading SPACES are trimmed first)
+//     '[1,2,3]'                -> got array
+//     '12345'                  -> got number
+//     'true'                   -> got boolean
+//     '\n\n{"a":1}'            -> OK           (a leading NEWLINE happens to survive)
+//
+// The old test was /^\s*[{[]/, which missed the number and boolean cases, and
+// leaned on that newline quirk being stable. Deciding it by whether the value
+// actually parses as a non-string is the same question the CLI is asking, so
+// the two cannot disagree.
 function cliPromptArg(prompt) {
   const s = String(prompt == null ? '' : prompt);
-  if (!/^\s*[{[]/.test(s)) return s;
+  let coerced = false;
+  try { coerced = typeof JSON.parse(s.trim()) !== 'string'; } catch (e) { coerced = false; }
+  if (!coerced) return s;
   return 'Follow this JSON specification exactly. Every field is a hard requirement.'
        + String.fromCharCode(10) + String.fromCharCode(10) + s;
 }
@@ -901,7 +925,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- state ----
-    if (req.method === 'GET' && p === '/api/state') return sendJson(res, 200, state);
+    // THE LIBRARY DOES NOT RIDE ALONG. It is the biggest thing in state.json
+    // now that each row carries the prompt that produced it (97 rows took the
+    // file from 67 KB to 313 KB), and the page never reads it from here - the
+    // Library tab fetches /api/library on its own. Shipping it on every state
+    // read is the same mistake README section 10 describes, where 795 KB of
+    // history went out on each poll. Sent as a count so the UI can still say
+    // how many there are.
+    if (req.method === 'GET' && p === '/api/state') {
+      const { library, ...rest } = state;
+      return sendJson(res, 200, Object.assign(rest, { libraryCount: (library || []).length }));
+    }
 
     if (req.method === 'POST' && p === '/api/scene') {
       const body = JSON.parse((await readBody(req)).toString('utf8'));
@@ -933,7 +967,7 @@ const server = http.createServer(async (req, res) => {
       if (body.videoModel !== undefined) state.videoModel = body.videoModel;
       if (body.editModel !== undefined) state.editModel = body.editModel;
       if (body.videoMotionMode !== undefined) state.videoMotionMode = body.videoMotionMode;
-      if (body.videoCameraSpeedKmh !== undefined) state.videoCameraSpeedKmh = body.videoCameraSpeedKmh;
+      if (body.videoCameraSpeedPct !== undefined) state.videoCameraSpeedPct = body.videoCameraSpeedPct;
       if (body.imageCompositionMode !== undefined) {
         state.imageCompositionMode = body.imageCompositionMode;
         state.imageCompositionModeChosen = true;   // an explicit pick survives migration
@@ -1072,21 +1106,42 @@ const server = http.createServer(async (req, res) => {
       // Media flags are left OUT on purpose: the CLI auto-uploads local paths,
       // and re-uploading a 3MB plate just to price it is a slow way to check
       // a type. The failures this catches are prompt type and param enums.
+      //
+      // AND THE MODE HAS TO GO WITH THEM. Stripping the media while keeping
+      // `--mode omni_reference` asks for something self-contradictory, and the
+      // model says so: "mode 'omni_reference' requires at least one reference
+      // media item". That is the preflight failing a request that would have
+      // succeeded, which blocked every wall from generating at all - a far
+      // worse failure than the one it was added to catch. Measured on
+      // seedance_2_5: dropping --mode alongside the media prices fine (28
+      // credits) and still validates the prompt type and every other enum
+      // (480p priced at 12, so the params really are being read).
+      const MEDIA_MODES = ['omni_reference', 'video_extension', 'i2v'];
       try {
-        const costArgs = args.filter((a, i) =>
-          !['--image', '--start-image', '--end-image'].includes(a) &&
-          !['--image', '--start-image', '--end-image'].includes(args[i - 1]));
+        const dropFlags = ['--image', '--start-image', '--end-image'];
+        let costArgs = args.filter((a, i) =>
+          !dropFlags.includes(a) && !dropFlags.includes(args[i - 1]));
+        if (sendsMedia) {
+          costArgs = costArgs.filter((a, i) =>
+            !(a === '--mode' && MEDIA_MODES.includes(String(costArgs[i + 1]))) &&
+            !(costArgs[i - 1] === '--mode' && MEDIA_MODES.includes(String(a))));
+        }
         costArgs[1] = 'cost';
         const costRaw = await runCli(HIGGSFIELD_BIN, costArgs.filter(a => a !== '--json'));
         if (/Invalid|error|Error/.test(costRaw) && !/credits/i.test(costRaw)) {
           throw new Error(costRaw.trim().split(String.fromCharCode(10))[0]);
         }
       } catch (e) {
-        const msg = String(e.message || e).trim();
-        state.walls[wall][mode === 'image' ? 'genImageStatus' : 'genVideoStatus'] = 'failed';
-        saveState();
-        return sendJson(res, 400, { error:
-          'Rejected before spending anything. The model refused these parameters: ' + msg.slice(0, 300) });
+        // A complaint about missing reference media is OUR doing - we removed
+        // it - so it is never a reason to refuse the real request, which does
+        // carry the media.
+        if (!/requires at least one reference media/i.test(String(e.message || e))) {
+          const msg = String(e.message || e).trim();
+          state.walls[wall][mode === 'image' ? 'genImageStatus' : 'genVideoStatus'] = 'failed';
+          saveState();
+          return sendJson(res, 400, { error:
+            'Rejected before spending anything. The model refused these parameters: ' + msg.slice(0, 300) });
+        }
       }
       // MiniMax H3 (and similar) rejects start_image/end_image mixed with a
       // normal image reference — the client only ever sends startImagePath/
@@ -1591,6 +1646,84 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       return sendJson(res, 200, { library: state.library || [], max: LIBRARY_MAX });
     }
 
+    // REBUILD THE LIBRARY FROM THE ACCOUNT.
+    //
+    // state.library only started being written when recordInLibrary was added,
+    // so every generation made before that is missing from the Library tab and
+    // the tab reads as broken when it is merely empty. README section 10 says
+    // the record can be lost but the generations cannot - this is that recovery
+    // path, wired up: `generate list` returns the jobs, and the wall and the
+    // move are parsed back out of each job's own prompt.
+    //
+    // It only ADDS. recordInLibrary dedupes on url, so re-running is safe and
+    // nothing already in the library (including ratings) is touched.
+    if (req.method === 'POST' && p === '/api/library-rebuild') {
+      try {
+        // 100 is the CLI's hard cap: --size 200 comes back
+        // "query.size: Input should be less than or equal to 100".
+        const raw = await runCli(HIGGSFIELD_BIN, ['generate', 'list', '--size', '100', '--json']);
+        const parsedList = JSON.parse(raw);
+        const jobs = Array.isArray(parsedList) ? parsedList
+                   : (parsedList.items || parsedList.data || []);
+        const VIDEO_JOB = /seedance|motion|video|kling|minimax|veo|wan/i;
+        let added = 0, skipped = 0;
+        // Oldest first so that unshifting leaves the newest at index 0.
+        for (const job of jobs.slice().reverse()) {
+          const url = job.result_url || jobResultUrl(job);
+          if (!url || job.status !== 'completed') { skipped++; continue; }
+          const prm = job.params || {};
+          const text = String(prm.prompt || '');
+          const wall = /\bLEFT WALL\b|"wall"\s*:\s*"left"|\/ LEFT wall/i.test(text) ? 'left'
+                     : /\bRIGHT WALL\b|"wall"\s*:\s*"right"|\/ RIGHT wall/i.test(text) ? 'right'
+                     : /\bCENTRE WALL\b|\bCENTER WALL\b|"wall"\s*:\s*"center"|\/ CENTER wall/i.test(text) ? 'center'
+                     : null;
+          const mv = text.match(/C_(?:PushIn|PushOut|TrackLeft|TrackRight|Hold)/);
+          const kind = VIDEO_JOB.test(String(job.job_type || prm.model || '')) ? 'video' : 'image';
+          // Already-present rows are not skipped outright: a row recorded
+          // before this endpoint existed (or by an earlier run of it) has no
+          // prompt, and the prompt is the whole point of a thumbs-up. Fill in
+          // what is missing without touching anything already set - ratings
+          // above all.
+          const existing = (state.library || []).find(r => r.url === url);
+          if (existing) {
+            let touched = false;
+            if (!existing.prompt && prm.prompt) {
+              existing.prompt = String(prm.prompt).slice(0, HISTORY_PROMPT_MAX); touched = true;
+            }
+            if (!existing.wall && wall) { existing.wall = wall; touched = true; }
+            if (!existing.move && kind === 'video' && mv) { existing.move = mv[0]; touched = true; }
+            if (touched) added++; else skipped++;
+            continue;
+          }
+          if (recordInLibrary(state, {
+            at: job.created_at || new Date().toISOString(),
+            wall, kind, url,
+            model: job.job_type || prm.model || null,
+            move: kind === 'video' && mv ? mv[0] : null,
+            durationSec: prm.duration || null,
+            resolution: prm.resolution || null,
+            scene: '',
+            // The prompt that produced it. This is what makes a thumbs-up on a
+            // recovered generation worth anything to the WRITER rather than
+            // only to the tally: likedExemplar needs prompt text, and without
+            // this a liked recovered clip could never become an exemplar.
+            // Capped at the same 2000 chars pruneHistory allows.
+            prompt: String(prm.prompt || '').slice(0, HISTORY_PROMPT_MAX),
+            note: 'recovered from the Higgsfield account',
+          })) added++; else skipped++;
+        }
+        saveState();
+        return sendJson(res, 200, {
+          added, skipped, total: (state.library || []).length,
+          summary: added
+            ? `Recovered ${added} generation${added === 1 ? '' : 's'} from your Higgsfield account.`
+            : 'Nothing new to recover — the library already has everything the account returned.',
+        });
+      } catch (e) {
+        return sendJson(res, 500, { error: 'Could not read the account: ' + String(e.message || e).slice(0, 300) });
+      }
+    }
+
     // Drop one row. The media itself lives on Higgsfield; this only forgets
     // the pointer, so it is safe and is not a delete of anyone's work.
     // Ratings live on the library row as well as on the version record: the
@@ -1604,13 +1737,43 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       row.rating = (row.rating === body.rating) ? null : body.rating;   // click again to clear
       // Keep the version record in step where one exists, so the calibrator
       // and the Statistics tally see the same verdict.
+      let linked = 0;
       for (const w of WALL_IDS) {
         for (const v of (state.history[w] || [])) {
-          if (v.genVideoUrl === body.url || v.genImageUrl === body.url) v.rating = row.rating;
+          if (v.genVideoUrl === body.url || v.genImageUrl === body.url) {
+            v.rating = row.rating;
+            v.ratedAt = new Date().toISOString();
+            linked++;
+          }
         }
       }
+      // NO VERSION MEANS THE RATING GOES NOWHERE. Everything the calibrator
+      // reads - likedExemplar, ratingTally, recordSample's meta.rating - comes
+      // out of state.history, never out of state.library. A row recovered from
+      // the account has no version record behind it, so rating it used to set a
+      // flag on a row nobody reads: the button lit up and the calibrator never
+      // heard about it. Mint the missing version from the row itself.
+      if (!linked && row.rating && row.wall && WALL_IDS.includes(row.wall)) {
+        LEARN.pushVersion(state.history, row.wall, 'rated', {
+          at: row.at || new Date().toISOString(),
+          sceneKey: state.centreRefHash || null,
+          fromLibrary: true,
+          move: row.move || null,
+          model: row.model || null,
+          // Carry the prompt across under the field likedExemplar reads, so a
+          // liked recovered clip actually teaches the writer something.
+          videoPrompt: row.kind === 'video' ? (row.prompt || '') : '',
+          imagePrompt: row.kind === 'image' ? (row.prompt || '') : '',
+          genVideoUrl: row.kind === 'video' ? row.url : null,
+          genImageUrl: row.kind === 'image' ? row.url : null,
+          rating: row.rating,
+          ratedAt: new Date().toISOString(),
+        });
+        linked = 1;
+      }
       saveState();
-      return sendJson(res, 200, { ok: true, rating: row.rating });
+      return sendJson(res, 200, { ok: true, rating: row.rating, linked,
+                                  tally: LEARN.ratingTally(state.history) });
     }
 
     if (req.method === 'POST' && p === '/api/library-forget') {
@@ -2201,20 +2364,20 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
         const trust = !probe.match || probe.match.intent_trustworthy !== false;
         if (apply) {
           const prev = state.rig || RIG.defaultRig();
-          const keptIntent = prev.intent, keptSpeed = prev.speedKmh;
+          const keptIntent = prev.intent, keptSpeed = prev.speedPct;
           state.rig = derived;
           if (!trust) {
             // Speed is derived from the same flow measurement as the intent, so
             // if the intent is untrustworthy the speed is too — restore both,
             // not just the label.
             state.rig.intent = keptIntent;
-            state.rig.speedKmh = keptSpeed;
+            state.rig.speedPct = keptSpeed;
             state.rig.speedInferred = false;
             state.rig.intentRejected = derived.intent;
-            state.rig.speedRejected = derived.speedKmh;
+            state.rig.speedRejected = derived.speedPct;
           }
           state.videoMotionMode = state.rig.intent === 'hold' ? 'idle' : 'moving';
-          if (derived.speedKmh && trust) state.videoCameraSpeedKmh = derived.speedKmh;
+          if (derived.speedPct && trust) state.videoCameraSpeedPct = derived.speedPct;
         }
         saveState();
         const applied = LEARN.applyCalibration(state.calibration, apply ? state.rig : derived);
@@ -2287,7 +2450,7 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
         if (body.apply !== false) {
           state.rig = derived;
           state.videoMotionMode = derived.intent === 'hold' ? 'idle' : 'moving';
-          if (derived.speedKmh) state.videoCameraSpeedKmh = derived.speedKmh;
+          if (derived.speedPct) state.videoCameraSpeedPct = derived.speedPct;
         }
         saveState();
         const applied = LEARN.applyCalibration(state.calibration, state.rig);

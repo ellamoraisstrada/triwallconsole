@@ -237,14 +237,14 @@ const PARALLAX_TEST =
   'If the whole frame scales or slides uniformly, with no difference between near and far, ' +
   'that is a lens zoom or a pan and it is WRONG.';
 
-function speedClause(kmh) {
-  return `one constant, unchanging speed of exactly ${kmh} kilometres per hour for the entire clip`;
+function speedClause(pct) {
+  return `one constant, unchanging speed for the entire clip (speed dial ${pct ?? 100}% of the reference pace)`;
 }
 
 // ------------------------------------------------------- per-wall movement ---
 // Each branch answers: given this ONE rig movement, what does THIS wall see?
 function movementRule(wallId, rig) {
-  const { intent, speedKmh, yawDegPerSec, tiltDegPerSec, durationSec } = rig;
+  const { intent, speedPct, yawDegPerSec, tiltDegPerSec, durationSec } = rig;
   const side = wallId === 'left' ? 'left' : wallId === 'right' ? 'right' : null;
   const outer = side;                                   // each side wall's outer edge
   const inner = side === 'left' ? 'right' : 'left';     // the edge touching centre
@@ -257,7 +257,7 @@ function movementRule(wallId, rig) {
     const fwd = intent === 'push_in';
     if (wallId === 'center') {
       return `Fixed movement rule: the camera physically travels ${fwd ? 'FORWARD into' : 'BACKWARD out of'} ` +
-        `the scene in a dead-straight line, at ${speedClause(speedKmh)}. This wall looks straight ` +
+        `the scene in a dead-straight line, at ${speedClause(speedPct)}. This wall looks straight ` +
         `down the direction of travel, so its content expands outward from the centre of the frame ` +
         `${fwd ? 'toward' : 'away from'} the edges${fwd ? ' as things pass the camera' : ''} — ` +
         `this is the only wall on which anything approaches or recedes. ${PARALLAX_TEST} Do not ` +
@@ -268,7 +268,7 @@ function movementRule(wallId, rig) {
     // OUTER edge — the world slides past you, it does not come at you.
     const dir = fwd ? outer : inner;
     return `Fixed movement rule: the camera physically travels ${fwd ? 'FORWARD' : 'BACKWARD'} at ` +
-      `${speedClause(speedKmh)} — but THIS wall faces ${RIG_GEOMETRY.sideWallAngleDeg} degrees to the ` +
+      `${speedClause(speedPct)} — but THIS wall faces ${RIG_GEOMETRY.sideWallAngleDeg} degrees to the ` +
       `${side} of that direction of travel, so it does NOT look down the line of travel and nothing ` +
       `in it approaches the camera. Instead the whole landscape slides steadily PAST the camera and ` +
       `off the ${dir.toUpperCase()} edge of this frame, the way scenery slides past a side window of a ` +
@@ -284,7 +284,7 @@ function movementRule(wallId, rig) {
     const goingLeft = intent === 'truck_left';
     if (wallId === 'center') {
       return `Fixed movement rule: the camera physically slides sideways to the ${goingLeft ? 'LEFT' : 'RIGHT'} ` +
-        `at ${speedClause(speedKmh)}, staying at a constant distance from the scene and never changing ` +
+        `at ${speedClause(speedPct)}, staying at a constant distance from the scene and never changing ` +
         `its facing direction. Content therefore travels across this frame toward the ` +
         `${goingLeft ? 'RIGHT' : 'LEFT'} edge. ${PARALLAX_TEST} No rotation, no pan, no tilt, no zoom, ` +
         `and no movement toward or away from the scene.`;
@@ -294,7 +294,7 @@ function movementRule(wallId, rig) {
     // mirror images here, unlike a push-in.
     const approaching = (goingLeft && side === 'left') || (!goingLeft && side === 'right');
     return `Fixed movement rule: the camera physically slides sideways to the ${goingLeft ? 'LEFT' : 'RIGHT'} ` +
-      `at ${speedClause(speedKmh)} without ever turning. THIS wall faces ` +
+      `at ${speedClause(speedPct)} without ever turning. THIS wall faces ` +
       `${RIG_GEOMETRY.sideWallAngleDeg} degrees to the ${side} of centre's forward direction, which means ` +
       `that sideways travel is, for this wall, movement ${approaching ? 'STRAIGHT TOWARD' : 'STRAIGHT AWAY FROM'} ` +
       `what it is looking at. So this wall's content ${approaching
@@ -533,7 +533,7 @@ function describeRig(rig) {
   // existing when the moves became C_* and threw on every rig read.
   const i = INTENTS[RIGMOVES.normalise(rig && rig.intent)];
   const bits = [i.label];
-  if (i.family === 'translate' && rig.intent !== 'hold') bits.push(`${rig.speedKmh} km/h`);
+  if (i.family === 'translate' && rig.intent !== 'hold') bits.push(`speed ${rig.speedPct ?? 100}%`);
   if (rig.intent === 'yaw_left' || rig.intent === 'yaw_right') bits.push(`${rig.yawDegPerSec}°/s`);
   if (rig.intent === 'tilt_up' || rig.intent === 'tilt_down') bits.push(`${rig.tiltDegPerSec}°/s`);
   if (rig.element && rig.element.enabled && rig.element.subject) {
@@ -552,13 +552,15 @@ function rigFromProbe(probe, base) {
   if (typeof m.pitch_deg_per_s === 'number') rig.tiltDegPerSec = +Math.abs(m.pitch_deg_per_s).toFixed(2);
   if (probe && probe.duration_s) rig.durationSec = Math.min(10, Math.round(probe.duration_s));
 
-  // Push rate -> a km/h number. There is no way to recover true world speed
-  // from pixels without depth, so this is an explicitly-stated mapping, not a
-  // measurement: the UE5 reference push (7.8%/s) is treated as the 15 km/h the
-  // approved sets were generated at, and everything scales linearly from that.
+  // Push rate -> the speed dial, directly. This used to invent a km/h figure
+  // through a stated convention (7.8%/s == 15 km/h) because the dial's unit was
+  // km/h and pixels carry no depth. The dial is a percentage of a measured rate
+  // now, and the probe reports that same kind of rate, so the two meet without
+  // any convention in between: 100% is RIGSPEC.BENCHMARK_DX_RATE per second.
   if (typeof m.push_rate_pct_per_s === 'number' && Math.abs(m.push_rate_pct_per_s) > 0.5) {
-    const kmh = Math.abs(m.push_rate_pct_per_s) / 7.8 * 15;
-    rig.speedKmh = Math.max(1, Math.min(120, Math.round(kmh)));
+    const benchPctPerSec = require('./rigspec.js').BENCHMARK_DX_RATE * 100;
+    rig.speedPct = Math.max(1, Math.min(1000,
+      Math.round(Math.abs(m.push_rate_pct_per_s) / benchPctPerSec * 100)));
     rig.speedInferred = true;
   }
   if (probe && probe.elements) {
@@ -576,7 +578,7 @@ function rigFromProbe(probe, base) {
 function defaultRig() {
   return {
     intent: 'C_PushIn',
-    speedKmh: 15,
+    speedPct: 100,
     yawDegPerSec: 6,
     tiltDegPerSec: 4,
     durationSec: 5,

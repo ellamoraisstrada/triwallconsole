@@ -266,7 +266,7 @@ function recalibrate(cal) {
 function applyCalibration(cal, rig) {
   if (!cal || !cal.enabled) return rig;
   const out = Object.assign({}, rig);
-  out.speedKmh = Math.max(1, Math.round(rig.speedKmh * cal.speedMultiplier));
+  out.speedPct = Math.max(1, Math.round((rig.speedPct ?? 100) * cal.speedMultiplier));
   out.calibrated = cal.speedMultiplier !== 1.0 || cal.sideBias !== 1.0;
   out.calibrationNote = out.calibrated
     ? `Calibrated from ${cal.totalGenerations} measured generation(s): speed x${cal.speedMultiplier}, ` +
