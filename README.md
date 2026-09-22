@@ -108,9 +108,11 @@ Two conversions and one rule:
 * Landmark model, used by the prompt and the verifier alike:
   `x(t) = 0.5 + (x0 − 0.5)·scale^(t/T) + dx·(t/T)`
 
-Only four moves plus Hold are offered. Turns and tilts stay measured in
-`rig_library.json` so the decoder can recognise them in client footage, but the
-show does not use them.
+**Only C_PushIn and C_PushOut are offered.** Track, Turn, Tilt and Hold stay in
+`rigmoves.MOVES` and `rig_library.json` so the decoder can still recognise them
+in client footage and saved state naming one still resolves — they are just not
+in the preset list (`PRESET_IDS` in `rigmoves.js`). Push out is push in played
+backwards, and the two must stay exact inverses at every speed and duration.
 
 ---
 
@@ -221,20 +223,57 @@ no flag overrides it. The instructions say "an AI image/video generator".
 
 ---
 
-## 6. Speed and clip length are one dial
+## 6. Speed is a rate, and clip length is separate
 
-The travel total is fixed by the reference render, so the same distance at
-twice the speed takes half the time. One stated anchor:
+**Speed % and Clip seconds are independent.** Speed sets a per-second rate and
+the clip length decides how long it runs, so
 
 ```
-15 km/h == 5 s        ->  duration = 75 / kmh
+dx_total = dx_per_second x duration
 ```
 
-Move either box and the other follows, along with every wall's model duration,
-the contract and the checkpoints. **That anchor is a convention, not a
-measurement** — pixels carry no depth, so no km/h can be derived from the
-reference clips. It rides in the contract as `camera.ground_speed_kmh`, a
-scene-scale reading; the measured frame figures govern.
+One speed means the same pace at 4 s and at 15 s; a longer clip simply covers
+more ground. Doubling the speed doubles the travel.
+
+**100% is measured**, not a convention. Six operator reference clips
+(`L_Clouds`, `R_Clouds`, `R_BLDG`, `L_grass`, `R_Desert`, `L_Desert`), each
+measured twice — by `wall_motion.py` and by accumulated phase correlation. The
+two estimators agreed on sign in all six and within 17% on magnitude:
+
+| clip | wall_motion | phase-corr | mean \|dx\|/s |
+|---|---|---|---|
+| L_Clouds | 0.0026 | 0.0091 | 0.0059 |
+| R_Clouds | 0.0072 | 0.0210 | 0.0141 |
+| R_BLDG | 0.2349 | 0.2072 | 0.2211 |
+| L_grass | 0.1439 | 0.1247 | 0.1343 |
+| R_Desert | 0.0356 | 0.0294 | 0.0325 |
+| L_Desert | 0.0990 | 0.1028 | 0.1009 |
+| | | **mean** | **0.0848** |
+
+Every `L_` clip travelled toward frame LEFT and every `R_` clip toward frame
+RIGHT — six independent confirmations of the push-in topology in §3. The two
+cloud clips sit far below the rest because their camera barely translates at
+all; almost all their apparent motion is the cloud layer itself. Excluding them
+gives 0.1222. The owner asked for all six averaged, so `BENCHMARK_DX_RATE` is
+**0.0848 frame widths per second** on a side wall at 100%.
+
+Cross-check: that benchmark puts the side walls' scale at ×1.0122/s, and the
+six clips measured ×1.0113/s — agreement to 0.1%, which is the only reason the
+centre's much larger scale is trusted to the same coupling.
+
+**`refDur` is deliberately absent from the speed math.** `spec()` works in
+gesture-fractions, so clip-trim length drops out algebraically. A pass that
+divided by each move's own reference length made the two presets stop being
+exact inverses (−0.424 against +0.447 on the same wall) purely because
+`C_PushIn.mp4` is trimmed to 1.93 s and `C_PushOut.mp4` to 1.83 s. They are one
+gesture played both ways — verified frame by frame in §3 — so that difference
+is noise and must never reach the contract. dx is now exactly inverse; scale is
+inverse to 0.06%, limited by the source table's independently measured
+×1.10 / ×0.91 pair.
+
+There is no km/h anywhere. It was never measurable — pixels carry no depth — and
+it rode in the contract as an advisory string that governed nothing while
+looking authoritative.
 
 Both ends round to whole seconds. A first pass allowed 2.5 s and produced three
 different durations at once — box 2.5, contract 2 (`readRigFromForm` parseInts

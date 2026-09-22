@@ -52,14 +52,21 @@
 // (The seam edge is the one that touches the centre wall: the RIGHT edge of
 // the left wall's frame, the LEFT edge of the right wall's frame.)
 //
-// SPEED: EXCURSION, NOT RATE
-// --------------------------
-// The reference moves are ~1.6-1.9 second beats. Copying their per-second rate
-// into a 5-second clip asks for two to three times as much travel as the
-// reference gesture contains, which is exactly the "speed is too much" report.
-// What transfers between clip lengths is the TOTAL EXCURSION — the gesture —
-// so the tables below are totals, and the per-second rate is derived by
-// dividing by whatever duration is being generated.
+// SPEED: A RATE THE OPERATOR SETS
+// -------------------------------
+// This USED to freeze the total excursion, so every clip travelled the same
+// distance whatever its length. That killed the "three times too far" bug but
+// left no control of pace at all: a 15-second clip just crawled through the
+// same gesture, and the km/h box governed nothing.
+//
+// The tables below are still the reference GESTURE (they fix the direction and
+// the ratios between the three walls), but spec() now reads them as a rate at
+// the reference's own duration and re-paces them by the speed dial, so
+//
+//     dx_total = dx_per_second x duration
+//
+// and one speed means the same thing at 4 seconds and at 15. See the speed
+// dial section below for where 100% comes from and how it was measured.
 
 const REF_VIEW_PX = 3840;      // one nDisplay view, master pixels
 const MASTER_H = 2160;
@@ -141,6 +148,77 @@ const MOVES = {
 // the tool ended up disagreeing with its own verifier.
 const SAFE_PX_PER_FRAME = 6;
 
+// ----------------------------------------------------------- the speed dial ---
+// SPEED IS A RATE NOW, NOT A TOTAL. This inverts what this file used to do, and
+// the reason is worth stating because the old rule is still written in README
+// section 6 ("scale by total excursion, never by per-second rate").
+//
+// That rule existed to stop a 1.9-second reference BEAT being replayed as a
+// 5-second clip's per-second rate, which asked for ~3x the travel. It solved
+// that by freezing the total: every clip travelled the same distance whatever
+// its length, so a 15-second clip just crawled. The operator had no control of
+// pace at all - the km/h box was inert, feeding one advisory string into the
+// contract and governing nothing.
+//
+// What the owner asked for instead: one linear speed that means the same thing
+// at 4 seconds and at 15 seconds, so distance = rate x duration.
+//
+// WHERE 100% COMES FROM. Six operator reference clips (L_Clouds, R_Clouds,
+// R_BLDG, L_grass, R_Desert, L_Desert), each measured twice - by wall_motion.py
+// (RANSAC similarity) and by accumulated phase correlation. The two estimators
+// agreed on sign in all six and within 17% on magnitude:
+//
+//     clip        wall_motion   phase-corr    mean |dx|/s
+//     L_Clouds      0.0026        0.0091        0.0059
+//     R_Clouds      0.0072        0.0210        0.0141
+//     R_BLDG        0.2349        0.2072        0.2211
+//     L_grass       0.1439        0.1247        0.1343
+//     R_Desert      0.0356        0.0294        0.0325
+//     L_Desert      0.0990        0.1028        0.1009
+//                                      mean =   0.0848
+//
+// Every L_ clip travelled toward frame LEFT and every R_ clip toward frame
+// RIGHT - independently confirming the push-in topology already in MOVES.
+// (The two cloud clips sit far below the rest: their camera barely translates
+// and almost all of their apparent motion is the cloud layer itself. Excluding
+// them raises the benchmark to 0.1222. The owner asked for all six averaged.)
+const BENCHMARK_DX_RATE = 0.0848;   // frame widths per second at Speed = 100%
+
+// The theatre's own reference gesture runs much harder than that. This is the
+// side wall's rate in the SAME units, so SPEED_UNITY below is the honest
+// statement of how much gentler the operator's clips are: 100% on the dial is
+// about a quarter of the nDisplay render's pace.
+//   C_PushIn left: 0.61 view widths x (3840/3520) = 0.6655 over refDur 1.93 s
+const REF_SIDE_DX_RATE = 0.61 * (REF_VIEW_PX / 3520) / 1.93;   // 0.3448 fw/s
+const SPEED_UNITY = BENCHMARK_DX_RATE / REF_SIDE_DX_RATE;      // 0.2460
+
+// Scale rides the same dial, in log space, so every ratio the reference render
+// measured between the walls survives at any speed. Cross-check that this is
+// not arbitrary: at 100% it puts the SIDE walls' scale at x1.0122/s, and the
+// six reference clips measured x1.0113/s. Those agree to 0.1%, which is the
+// only reason the centre's much larger scale is trusted to the same coupling.
+// The reference gesture's own side-wall excursion, in delivered frame widths.
+// Both presets share it (C_PushOut is C_PushIn reversed), which is what lets
+// the two stay EXACT inverses of each other at every speed and duration.
+const REF_SIDE_DX_TOTAL = 0.61 * (REF_VIEW_PX / 3520);   // 0.6655
+
+// How much of the reference gesture this clip performs.
+//
+//     g = speed x BENCHMARK_DX_RATE x duration / REF_SIDE_DX_TOTAL
+//
+// Note what is NOT in that: refDur. An earlier pass divided each move by its
+// own reference clip length, and because C_PushIn.mp4 is trimmed to 1.93 s and
+// C_PushOut.mp4 to 1.83 s, the two presets stopped being exact inverses
+// (-0.424 against +0.447 on the same wall). They are the same gesture played
+// in opposite directions - README section 3 verified that frame by frame - so
+// the trim difference is measurement noise and must not reach the contract.
+// Working in gesture-fractions makes clip length drop out algebraically.
+function gestureFraction(speedPct, T) {
+  const p = Number(speedPct);
+  const pct = (Number.isFinite(p) && p > 0 ? p : 100) / 100;
+  return pct * BENCHMARK_DX_RATE * T / REF_SIDE_DX_TOTAL;
+}
+
 function normalise(id) {
   if (id && MOVES[id]) return id;
   const legacy = {
@@ -169,7 +247,7 @@ function round(x, n) { const f = Math.pow(10, n); return Math.round(x * f) / f; 
  * Everything downstream — prompt text, inspector, verifier — reads this, so
  * there is exactly one place where a number can be wrong.
  */
-function spec(moveId, wallId, durationSec) {
+function spec(moveId, wallId, durationSec, speedPct) {
   const id = normalise(moveId);
   const m = MOVES[id];
   const w = wallKey(wallId);
@@ -180,12 +258,22 @@ function spec(moveId, wallId, durationSec) {
   // were measured across a 3840 view, so the same world travel is a slightly
   // larger fraction of the delivered frame.
   const conv = REF_VIEW_PX / WALL_PX[w];
-  const dxTotal = raw.dx * conv;
-  const dyTotal = raw.dy * (MASTER_H / WALL_H[w]);
 
+  // The reference gesture, converted to a PER-SECOND rate at the reference's
+  // own duration, then re-paced by the speed dial. Reading the gesture as a
+  // rate is what lets one speed mean the same thing at 4 s and at 15 s; the
+  // ratios between the three walls are untouched, so the rig still moves as
+  // one body however hard it is driven.
+  const g = gestureFraction(speedPct, T);
+  const dxTotal = raw.dx * conv * g;
   const dxRate = dxTotal / T;                       // frame-widths per second
-  const scaleTotal = raw.scale;
-  const scaleRate = Math.pow(scaleTotal, 1 / T);    // per second
+  const dyTotal = raw.dy * (MASTER_H / WALL_H[w]) * g;
+
+  // Scale compounds, so it takes the gesture fraction as an exponent. Because
+  // the two presets' raw scales are exact reciprocals (x2.00 and x0.50), so are
+  // their results at any speed and any duration.
+  const scaleTotal = Math.pow(raw.scale, g);
+  const scaleRate = Math.pow(scaleTotal, 1 / T);
   const pxPerFrame = Math.abs(dxTotal) * WALL_PX[w] / (T * FPS);
 
   const seamEdge = w === 'left' ? 'RIGHT' : w === 'right' ? 'LEFT' : null;
@@ -202,6 +290,7 @@ function spec(moveId, wallId, durationSec) {
     substituted: (moveId && !MOVES[moveId] && /Turn|Tilt|yaw|tilt/.test(String(moveId)))
       ? String(moveId) : null,
     refClip: m.refClip, refDur: m.refDur,
+    speedPct: round(g * REF_SIDE_DX_TOTAL / (BENCHMARK_DX_RATE * T) * 100, 1),
     durationSec: T, framePx: WALL_PX[w], frameH: WALL_H[w], fps: FPS,
     dxTotal: round(dxTotal, 4), dxRate: round(dxRate, 4),
     dyTotal: round(dyTotal, 4), dyRate: round(dyTotal / T, 4),
@@ -262,8 +351,8 @@ function pct(x) { return (x >= 0 ? '+' : '') + (x * 100).toFixed(1) + '%'; }
  * The block the locked prompt carries. Numbers first, prose only to say what
  * the numbers mean.
  */
-function numericBlock(moveId, wallId, durationSec) {
-  const sp = spec(moveId, wallId, durationSec);
+function numericBlock(moveId, wallId, durationSec, speedPct) {
+  const sp = spec(moveId, wallId, durationSec, speedPct);
   const NL = String.fromCharCode(10);
   const L = [];
   const wallName = sp.wall === 'center' ? 'CENTRE WALL' : sp.wall.toUpperCase() + ' WALL';
@@ -417,9 +506,9 @@ function cameraGloss(sp) {
   };
 }
 
-function inspector(moveId, durationSec) {
+function inspector(moveId, durationSec, speedPct) {
   return ['left', 'center', 'right'].map(w => {
-    const sp = spec(moveId, w, durationSec);
+    const sp = spec(moveId, w, durationSec, speedPct);
     return {
       wall: w,
       framePx: sp.framePx + ' x ' + sp.frameH,
@@ -460,8 +549,8 @@ function inspector(moveId, durationSec) {
  * bgRatio, durationSec - all in the delivered clip's own frame units, which is
  * exactly what spec() states.
  */
-function compare(moveId, wallId, measured) {
-  const want = spec(moveId, wallId, measured.durationSec || 5);
+function compare(moveId, wallId, measured, speedPct) {
+  const want = spec(moveId, wallId, measured.durationSec || 5, speedPct);
   const row = { wall: wallId, problems: [], want: want };
 
   row.dx = { want: want.dxTotal, got: measured.dxTotal };
@@ -597,9 +686,14 @@ function negativePrompt(sp) {
   if (sp.towardEdge) {
     const wrong = sp.towardEdge === 'LEFT' ? 'RIGHT' : 'LEFT';
     n.push('nothing travels toward the ' + wrong + ' edge - not one object, not the crowd');
+  }
+  // Outside the direction test on purpose: a centre wall on a dolly has dx = 0,
+  // so these two used to be omitted and its contract carried no rule against an
+  // element moving on its own at all.
+  if (sp.kind !== 'static') {
     n.push('the background is never still while the foreground moves');
-    n.push('no object moves across the picture by itself - the picture moves, its contents do not '
-         + 'change position within the scene');
+    n.push('no object travels across the picture on its own - the picture is what moves, and '
+         + 'nothing changes its position within the scene');
   }
   if (Math.abs(sp.scaleTotal - 1) < 0.15) {
     n.push('no zoom, no dolly, nothing gets bigger or smaller');
@@ -658,7 +752,7 @@ function sizeWords(scaleTotal) {
  * still in the inspector; it was never something the generator could act on.
  */
 function cameraJson(moveId, wallId, durationSec, opts) {
-  const sp = spec(moveId, wallId, durationSec);
+  const sp = spec(moveId, wallId, durationSec, opts && opts.speedPct);
   const zooms = Math.abs(sp.scaleTotal - 1) >= 0.15;
   const scaleEnd = zooms ? sp.scaleTotal : 1.0;
   const sz = sizeWords(scaleEnd);
@@ -712,14 +806,16 @@ function cameraJson(moveId, wallId, durationSec, opts) {
                    + 'these values at these times. Equal movement in every equal slice of time.',
   };
 
-  const kmh = opts && Number(opts.groundSpeedKmh);
-  if (kmh && sp.kind !== 'static') {
-    out.camera.ground_speed_kmh = kmh;
-    out.camera.ground_speed_note =
-      'how fast this move should READ in the real space - the pace the world goes past at. The '
-      + 'frame figures above are measured off the reference render and govern the result; this is '
-      + 'the same motion described at scene scale, so the world does not go past at a pace that '
-      + 'looks wrong for the room.';
+  // No km/h. It was never measurable here - pixels carry no depth - so it rode
+  // in the contract as an advisory string that governed nothing while looking
+  // authoritative. What the dial sets is a real, checkable rate, and it is
+  // already stated above as dx_per_second; this only records where it came from.
+  if (sp.kind !== 'static') {
+    out.camera.speed_percent = sp.speedPct;
+    out.camera.speed_note =
+      'Speed is a RATE, so the travel above is dx_per_second x duration: the same speed over a '
+      + 'longer clip covers proportionally more ground. 100% is the measured average of the '
+      + 'operator reference clips (' + BENCHMARK_DX_RATE + ' of frame width per second on a side wall).';
   }
 
   if (sp.wall !== 'center' && sp.towardEdge) {
