@@ -949,8 +949,8 @@ function buildWallCard(kind, w){
           </div>
         </div>` : ''}
         <div class="prompt-tag">🔒 Fixed rules <span>— locked; change only by asking Claude</span>
-          <button class="collapse" data-collapse="${kind}fixed-${w.id}" style="float:right;">hide</button></div>
-        <pre class="fixed-rules hidden" id="${kind}fixed-${w.id}"></pre>
+          <button class="collapse" data-collapse="${kind}fixed-${w.id}" style="float:right;">show</button></div>
+        <pre class="fixed-rules collapsible hidden" id="${kind}fixed-${w.id}"></pre>
         <div class="prompt-tag">Your description <span>— what's specific to this wall, fully editable</span></div>
         <textarea class="wallprompt" id="${kind}prompt-${w.id}" placeholder="${isImg ? 'The subject/action for this wall — leave blank and click Improve to have Claude derive it from the scene.' : 'Objects, action, lighting, mood — leave blank and click Improve to have Claude derive it from the scene.'}"></textarea>
         <div class="fields" id="${kind}fields-${w.id}"></div>
@@ -3933,6 +3933,16 @@ async function verifyBuild(){
 }
 
 (async function init(){
+  // FIRST, synchronous, before any network call. Tabs used to be built from
+  // the finished page as the LAST step, so every load showed the full
+  // nine-section scroll for as long as the catalog/state/rig-rules calls
+  // below took, then snapped into tabs. buildTabs() only moves already-parsed
+  // static DOM by id — it needs nothing from the network — so the tabbed
+  // structure is what the page shows from frame one, and every section below
+  // fills in progressively inside it instead of before it.
+  try { buildTabs(); } catch (e) {
+    console.error('tab layout failed, leaving the page as one scroll:', e);
+  }
   verifyBuild();
   // Kicked off before anything that shells out to a CLI. Nothing below needs
   // it until the rig panel is written, so it overlaps the slow catalog reads
@@ -3942,14 +3952,15 @@ async function verifyBuild(){
   // unauthenticated they throw, and an uncaught throw here used to abandon the
   // whole init — leaving not just empty dropdowns but every section below
   // unwired, with no error anywhere. Surface it and keep going instead.
+  // The three catalogs are independent reads (image, video, edit — edit is
+  // still catalog type 'image', Higgsfield doesn't tag "editing" separately)
+  // so they run concurrently rather than as three queued round trips.
   try {
-    imageModels = await populateModelSelect(document.getElementById('imageModelSelect'), 'image');
-    videoModels = await populateModelSelect(document.getElementById('videoModelSelect'), 'video');
-  // Edit models are still catalog type 'image' (Higgsfield doesn't tag
-  // "editing" as its own type) — same full, never-hardcoded list as the
-  // main image dropdown, just defaulted to a model actually built for
-  // instruction-based photo edits rather than from-scratch generation.
-    editModels = await populateModelSelect(document.getElementById('editModelSelect'), 'image');
+    [imageModels, videoModels, editModels] = await Promise.all([
+      populateModelSelect(document.getElementById('imageModelSelect'), 'image'),
+      populateModelSelect(document.getElementById('videoModelSelect'), 'video'),
+      populateModelSelect(document.getElementById('editModelSelect'), 'image'),
+    ]);
     preferDefault(document.getElementById('imageModelSelect'), imageModels, 'gpt_image_2');
     preferDefault(document.getElementById('videoModelSelect'), videoModels, 'seedance_2_0');
     preferDefault(document.getElementById('editModelSelect'), editModels, 'flux_kontext');
@@ -3989,13 +4000,12 @@ async function verifyBuild(){
   refreshVideoFixedRulesDisplay();
   try { const c = await api('/api/calibration'); renderCalibration(c.calibration); } catch (e) {}
   try { await renderHistory(); } catch (e) {}
-  // LAST. Every section is fully built and wired by this point, so moving the
-  // nodes into tab panels cannot race anything that expects to find them in the
-  // document during its own setup.
+  // Tabs are already built (see the top of this function) and, if the video
+  // tab was the last one open, showTab() already fired an early preset-debug
+  // read from whatever partial data existed at that moment. Re-run it now
+  // that state, models and rig rules have all settled, so the panel reflects
+  // the real thing rather than a mid-load guess.
   try { await refreshPresetDebug(); } catch (e) {}
-  try { buildTabs(); } catch (e) {
-    console.error('tab layout failed, leaving the page as one scroll:', e);
-  }
 })();
 </script>
 </body>

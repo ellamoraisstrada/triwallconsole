@@ -1,5 +1,7 @@
 # Tri-Wall Console
 
+TEST UPDATE
+
 Generates the three wall videos for one camera move in a U-shaped LED immersive
 theatre. A local Node server plus a single-page UI; it drives the Higgsfield
 CLI for generation and a headless `claude` CLI for prompt writing.
