@@ -949,8 +949,8 @@ function buildWallCard(kind, w){
           </div>
         </div>` : ''}
         <div class="prompt-tag">🔒 Fixed rules <span>— locked; change only by asking Claude</span>
-          <button class="collapse" data-collapse="${kind}fixed-${w.id}" style="float:right;">hide</button></div>
-        <pre class="fixed-rules hidden" id="${kind}fixed-${w.id}"></pre>
+          <button class="collapse" data-collapse="${kind}fixed-${w.id}" style="float:right;">show</button></div>
+        <pre class="fixed-rules collapsible hidden" id="${kind}fixed-${w.id}"></pre>
         <div class="prompt-tag">Your description <span>— what's specific to this wall, fully editable</span></div>
         <textarea class="wallprompt" id="${kind}prompt-${w.id}" placeholder="${isImg ? 'The subject/action for this wall — leave blank and click Improve to have Claude derive it from the scene.' : 'Objects, action, lighting, mood — leave blank and click Improve to have Claude derive it from the scene.'}"></textarea>
         <div class="fields" id="${kind}fields-${w.id}"></div>
