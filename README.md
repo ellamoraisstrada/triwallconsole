@@ -241,10 +241,17 @@ different durations at once — box 2.5, contract 2 (`readRigFromForm` parseInts
 it), model field 3 — and a clip whose contract states a different length than
 the model renders invalidates every checkpoint in the prompt.
 
-**Six generation options are shared across the three walls** — `aspect_ratio`,
-`bitrate_mode`, `duration`, `extension_mode`, `mode`, `resolution`, plus
-`background`, `quality`, `output_format` on the image side. A set generated at
-three different resolutions is not a set. Everything else stays per wall.
+**Every generation setting is shared across the three walls by default** —
+whatever the selected model exposes (`aspect_ratio`, `bitrate_mode`,
+`duration`, `resolution`, `quality`, ...): change it on one wall's card and it
+mirrors onto the other two live, because a set generated at three different
+resolutions is not a set. Governed by a **"link settings across walls"**
+checkbox in the Image/Video generation section header, one per page, always
+back on at page load — an unlinked wall left over from a previous visit is
+exactly the silent drift this exists to prevent. Uncheck it to dial one wall
+independently; re-checking it snaps all three back to the left wall's values
+immediately. The wall's own prompt text and reference image are never
+touched by this — only the model-parameter fields.
 
 ---
 

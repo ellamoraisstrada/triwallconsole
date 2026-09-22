@@ -314,10 +314,10 @@
   <div class="setup" id="sceneRow">
     <div class="card" id="sceneCard">
       <h2>Scene <span class="sub">describe the centre wall — option A only</span></h2>
-      <textarea id="sceneInput" placeholder="Describe the whole shot: what's in it, lighting, action, camera movement and timing. Click Save to fill in every wall's prompt automatically."></textarea>
+      <textarea id="sceneInput" placeholder="Describe the whole shot: what's in it, lighting, action, camera movement and timing. Click Save scene, then use each wall's own Draft button below to fill in its prompt."></textarea>
       <div class="actions">
-        <button class="btn small" id="saveSceneBtn">Save &amp; generate prompts</button>
-        <button class="btn ghost small" id="syncBtn" title="Pull prompts Claude drafted in chat instead">Sync from chat</button>
+        <button class="btn small" id="saveSceneBtn" title="Saves this text as the scene, and clears every wall's own prompt field back to just its locked rules — draft each wall fresh from there">Save scene</button>
+        <button class="btn ghost small" id="syncBtn" title="Pull the scene and prompts Claude already wrote in the /tri-wall chat, instead of typing them here">Sync from chat</button>
       </div>
       <div class="statusline" id="syncStatus"></div>
       <div class="prompt-tag">Reference image <span style="text-transform:none;letter-spacing:0;">— center wall; left &amp; right pivot off this</span></div>
@@ -345,6 +345,11 @@
   <div class="section-head" id="imgHead">
     <h2><span class="stepno">2</span>Image generation <span class="sub">build the centre, then extend it left and right</span></h2>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);"
+             title="When checked, changing a setting (resolution, aspect ratio, quality, etc.) on any one wall's card applies it to the other two as well, so a set is never accidentally built at three different resolutions. Uncheck to dial one wall's settings independently. Always back on when the page loads — an unlinked wall from a previous visit is exactly the silent drift this exists to prevent.">
+        <input type="checkbox" id="imgLinkSettings" checked style="width:auto;accent-color:var(--accent);">
+        link settings across walls
+      </label>
       <select id="imageCompositionMode" style="width:auto;" title="How the side walls relate to the centre. Extension is the default: same world continues, but the centre's hero element never repeats.">
         <option value="extension">Extension — same world continues, centre's subject does not repeat</option>
         <option value="panoramic">Panoramic — one photo sliced in three, everything continues</option>
@@ -374,7 +379,14 @@
 
   <div class="section-head" id="vidHead">
     <h2><span class="stepno">3</span>Video generation <span class="sub">one physical camera — all three walls derive from it</span></h2>
-    <button class="btn small" id="draftVideoPromptsBtn" title="Have Claude write each wall's ambient-motion description by looking at that wall's own reference image — doesn't generate video, just drafts text for you to review">Generate prompt from image</button>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);"
+             title="When checked, changing a setting (resolution, duration, bitrate, etc.) on any one wall's card applies it to the other two as well, so a set is never accidentally rendered at three different resolutions or lengths. Uncheck to dial one wall's settings independently. Always back on when the page loads — an unlinked wall from a previous visit is exactly the silent drift this exists to prevent.">
+        <input type="checkbox" id="vidLinkSettings" checked style="width:auto;accent-color:var(--accent);">
+        link settings across walls
+      </label>
+      <button class="btn small" id="draftVideoPromptsBtn" title="Have Claude write each wall's ambient-motion description by looking at that wall's own reference image — doesn't generate video, just drafts text for you to review">Draft in-scene motion — all 3 walls</button>
+    </div>
   <div id="decodeSection">
   <div class="section-head">
     <h2><span class="stepno">3A</span>Decoder <span class="sub">measure the centre clip, match it to a rig move, write it into the side rules</span></h2>
@@ -400,7 +412,7 @@
     </label>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <span style="font-family:var(--mono);font-size:10.5px;color:var(--muted-dim);">or decode a wall's own video:</span>
-      <button class="btn ghost small" data-decode-wall="center">Centre wall video</button>
+      <button class="btn ghost small" data-decode-wall="center">Centre</button>
       <button class="btn ghost small" data-decode-wall="left">Left</button>
       <button class="btn ghost small" data-decode-wall="right">Right</button>
       <span id="decodeWallNote" style="font-family:var(--mono);font-size:10.5px;color:var(--muted-dim);"></span>
@@ -1320,17 +1332,34 @@ WALLS.forEach(w => { document.getElementById(`refinefixed-${w.id}`).textContent 
 refreshImageFixedRulesDisplay();
 refreshVideoFixedRulesDisplay();
 
-// Six option names, not a blanket sync - see the note above.
-const SHARED_PARAMS = ['aspect_ratio', 'bitrate_mode', 'duration', 'extension_mode',
-                       'mode', 'resolution',
-                       // image side
-                       'background', 'quality', 'output_format', 'style', 'moderation'];
+// LINKING. imgLinkSettings/vidLinkSettings (checkboxes in the Image/Video
+// generation section headers) gate this. On by default, every setting field
+// typed on one wall's card - resolution, aspect ratio, duration, whatever the
+// selected model exposes - mirrors onto the other two walls live, so a set is
+// never accidentally built at three different resolutions or lengths (the
+// exact "not a set" failure README §6 describes). Off, a wall's settings
+// change independently, no mirroring. Deliberately NOT persisted (no
+// localStorage) - always back on at the next page load, so an unlinked wall
+// left over from a previous visit can never silently carry forward.
+function settingsLinked(kind){
+  const box = document.getElementById(kind + 'LinkSettings');
+  return box ? box.checked : true;
+}
+
+// Checkbox-type model params (e.g. a boolean flag) store their state in
+// .checked, not .value - every other field type uses .value. Read/write
+// through these two so syncing doesn't quietly no-op on a boolean field.
+function fieldValueOf(el){ return el.type === 'checkbox' ? el.checked : el.value; }
+function setFieldValueOf(el, v){
+  if (el.type === 'checkbox') el.checked = (v === true || v === 'true');
+  else el.value = v;
+}
 
 function syncSharedParam(kind, param, value){
   WALLS.forEach(w => {
     const el = document.getElementById(kind + 'field-' + w.id + '-' + param);
-    if (!el || el.value === String(value)) return;
-    el.value = value;
+    if (!el || fieldValueOf(el) === value) return;
+    setFieldValueOf(el, value);
   });
   // Clip seconds is the same number as the model's duration, and the speed
   // is the same number again in different units.
@@ -1343,12 +1372,35 @@ function syncSharedParam(kind, param, value){
   }
 }
 
+// Snaps every setting on the OTHER walls to match the lead (left) wall's
+// current values. Runs once right after fresh fields are built for a newly
+// selected model (see renderAllFields) and again whenever a link checkbox is
+// turned back on, so re-linking takes effect immediately instead of waiting
+// for the next field edit.
+function resyncLinkedFields(kind){
+  const walls = kind === 'vid' ? WALLS : IMAGE_WALLS;
+  const lead = walls[0] && walls[0].id;
+  if (!lead) return;
+  const prefix = `${kind}field-${lead}-`;
+  document.querySelectorAll(`[id^="${prefix}"]`).forEach(src => {
+    syncSharedParam(kind, src.id.slice(prefix.length), fieldValueOf(src));
+  });
+}
+
 document.addEventListener('change', (e) => {
   const id = e.target && e.target.id;
   if (!id) return;
   const m = /^(img|vid|refine)field-(left|center|right)-(.+)$/.exec(id);
-  if (!m || !SHARED_PARAMS.includes(m[3])) return;
-  syncSharedParam(m[1], m[3], e.target.value);
+  if (!m || !settingsLinked(m[1])) return;
+  syncSharedParam(m[1], m[3], fieldValueOf(e.target));
+});
+
+['imgLinkSettings', 'vidLinkSettings'].forEach(id => {
+  const box = document.getElementById(id);
+  if (!box) return;
+  box.addEventListener('change', () => {
+    if (box.checked) resyncLinkedFields(id === 'imgLinkSettings' ? 'img' : 'vid');
+  });
 });
 
 const SPEED_ANCHOR_KMH = 15;    // the two ends of the stated mapping, see above
@@ -1437,15 +1489,14 @@ async function renderAllFields(kind){
   const jst = document.getElementById(selectId).value;
   const walls = kind === 'vid' ? WALLS : IMAGE_WALLS; // 'img' and 'refine' both apply to all three walls (IMAGE_WALLS === WALLS)
   await Promise.all(walls.map(w => renderFieldsFor(kind, w.id, jst)));
-  // Freshly built fields carry the model's per-wall defaults. Take the left
-  // wall's value as the set's value so the three start in agreement rather
-  // than drifting until someone notices.
+  // Freshly built fields carry the model's own per-wall defaults (which can
+  // legitimately differ - see the per-wall aspect_ratio pick above). Linked,
+  // take the left wall's value as the set's value so the three start in
+  // agreement rather than drifting until someone notices; unlinked, each
+  // wall keeps its own freshly-built default.
   const lead = walls[0] && walls[0].id;
-  if (lead) {
-    SHARED_PARAMS.forEach(param => {
-      const src = document.getElementById(kind + 'field-' + lead + '-' + param);
-      if (src) syncSharedParam(kind, param, src.value);
-    });
+  if (lead && settingsLinked(kind)) {
+    resyncLinkedFields(kind);
     const rd = document.getElementById('rigDuration');
     const dur = document.getElementById(kind + 'field-' + lead + '-duration');
     if (rd && dur && Number(rd.value) >= 1) {
@@ -2638,8 +2689,9 @@ async function uploadRef(file){
   st.textContent = `Uploading ${file.name} (${(file.size/1048576).toFixed(1)} MB)…`;
   try {
     // A dropped VIDEO is also attached to the centre wall as its motion
-    // reference, so "Centre wall video" can re-decode it later without another
-    // upload. An image is not attached — there is nothing to decode from a still.
+    // reference, so the "Centre" decode button can re-decode it later without
+    // another upload. An image is not attached — there is nothing to decode
+    // from a still.
     const isVideo = /^video\//.test(file.type) || /\.(mp4|mov|webm|m4v)$/i.test(file.name);
     const res = await fetch('/api/upload-ref', {
       method: 'POST',

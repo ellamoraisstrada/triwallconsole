@@ -20,10 +20,14 @@ generation call goes through the `higgsfield` CLI (see the
 full model catalog, never a hardcoded subset.
 
 Prompts get filled in two ways, and the user can use either or both:
-- **Auto-template, no LLM**: the page's own "Save & generate prompts"
-  button builds all five prompts from the scene text with a fixed JS
-  template — instant, free, but mechanical (no real reasoning, no looking
-  at the reference image).
+- **Typed on the page**: the Scene card's **"Save scene"** button saves the
+  scene text and clears every wall's own prompt field back to just its
+  locked fixed rules — it does NOT auto-fill wall prompts from the scene
+  text (an earlier version did, via a fixed JS template; that was dropped
+  because a locked fixed-rules block is already a complete prompt on its
+  own, and dumping raw scene text into it risked leaking other walls'
+  content, e.g. "left wall has bears" showing up in center's prompt too).
+  Each wall still needs its own "Draft…" button or typed text afterward.
 - **"✨ Improve" button, genuine Claude**: the page's server shells out to
   the standalone `claude` CLI (`claude auth login` once, against the
   user's own account — no separate API key) to actually rewrite one wall's
@@ -777,9 +781,9 @@ scene.
 
 **Any video prompt already drafted before this change is stale** — it
 still describes static content, not motion, since it was written under the
-old instruction. Redraft with the "Generate prompt from image"/per-wall
-button (or ask the user if they want that done) rather than assuming
-existing text already fits the new ambient-motion intent.
+old instruction. Redraft with the "Draft in-scene motion — all 3 walls"/
+per-wall button (or ask the user if they want that done) rather than
+assuming existing text already fits the new ambient-motion intent.
 
 ## Workflow
 
