@@ -344,8 +344,6 @@ def classify(walls, fps, hfov, width, height):
     for k, rows in walls.items():
         runs = usable_runs(rows or [])
         clean[k] = max(runs, key=len) if runs else []
-    usable_s = round(max((len(v) for v in clean.values()), default=0) * 0.0 +
-                     (len(max(clean.values(), key=len)) if any(clean.values()) else 0) / max(1e-6, fps) * 0, 2)
 
     have3 = all(clean.get(k) for k in ('LEFT', 'CENTER', 'RIGHT'))
     if have3:

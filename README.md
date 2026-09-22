@@ -390,7 +390,7 @@ wall and preset can be parsed back out of each job's own prompt.
 | `principles.js` | assembles the locked block; `IMAGE_MODE_VERBATIM` |
 | `rig.js` | presets, fixed rules, travelling-element choreography |
 | `server.js` | API, Higgsfield/Claude CLI calls, state, build stamp |
-| `index.html` | the whole UI (Login / Image / Video / Library / Statistics) |
+| `index.html` | the whole UI (Login / Image / Video / Library / Player / Statistics) |
 | `learn_rig.py` | measures the reference renders into `rig_library.json` |
 | `wall_motion.py` | measures one finished clip, in the spec's own units |
 | `make_end_frame.py` | builds the end frame for the motion lock |

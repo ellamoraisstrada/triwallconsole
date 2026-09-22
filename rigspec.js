@@ -863,7 +863,7 @@ function presetIds() { return Object.keys(MOVES); }
 
 module.exports = {
   cameraGloss,
-  MOVES, REF_VIEW_PX, WALL_PX, WALL_H, FPS, SAFE_PX_PER_FRAME,
+  MOVES, REF_VIEW_PX, WALL_PX, WALL_H, FPS, SAFE_PX_PER_FRAME, BENCHMARK_DX_RATE,
   normalise, spec, posAt, posAtY, landmarkRows, numericBlock, inspector, presetIds, compare,
   cameraJson, travelWord, anchorsFor,
 };

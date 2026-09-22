@@ -164,12 +164,15 @@ function workspaceStatus(bin) {
   const list = listWorkspaces(bin);
   if (list.ok) {
     const sel = list.workspaces.find(w => w.selected);
-    if (sel) return { ok: true, selected: sel, none: false };
-    return { ok: false, selected: null, none: true };
+    // `workspaces` carried on every branch below (not just the selected one)
+    // so a caller building a picker never needs a second `workspace list`
+    // call just to get the same array workspaceStatus already fetched.
+    if (sel) return { ok: true, selected: sel, none: false, workspaces: list.workspaces };
+    return { ok: false, selected: null, none: true, workspaces: list.workspaces };
   }
   const r = runSync(bin, ['workspace', 'status', '--json'], 20000);
   const none = /no workspace/i.test(r.err + r.out);
-  if (none) return { ok: false, selected: null, none: true };
+  if (none) return { ok: false, selected: null, none: true, workspaces: [], listError: list.error || null };
   let j = null;
   try { j = JSON.parse(r.out); } catch (e) {}
   const w = j && (j.workspace || j);
@@ -177,6 +180,7 @@ function workspaceStatus(bin) {
   return {
     ok: !!id, selected: id ? { id, name: (w.name || w.title || id) } : null,
     none: !id, raw: id ? null : (r.out || r.err).slice(0, 200),
+    workspaces: [], listError: list.error || null,
   };
 }
 

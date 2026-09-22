@@ -223,16 +223,23 @@ function workspaceCheck(hf, CONNECT, bin) {
     return { id: 'workspace', label: 'Billing workspace', required: true, ok: false, state: 'blocked',
       detail: 'Sign in first — the workspace list cannot be read until then.', fix: null };
   }
+  // workspaceStatus() already runs `workspace list` internally and now
+  // carries the array on its return, so the picker below reuses that instead
+  // of spawning the CLI a second time for the same data.
   const st = CONNECT.workspaceStatus(bin);
   if (st.ok && st.selected) {
+    // `workspaces` carried here too (not just the none-selected branch below)
+    // so the "Use this workspace" picker still has options to switch TO on a
+    // team with more than one - previously this branch left it empty and the
+    // picker was only ever useful the very first time, before anything was
+    // selected yet.
     return { id: 'workspace', label: 'Billing workspace', required: true, ok: true, state: 'selected',
       detail: `Renders bill to "${st.selected.name}". Change it below if that is the wrong account.`,
-      workspace: st.selected, canPickWorkspace: true, fix: null };
+      workspace: st.selected, workspaces: st.workspaces || [], canPickWorkspace: true, fix: null };
   }
-  const list = CONNECT.listWorkspaces(bin);
   return { id: 'workspace', label: 'Billing workspace', required: true, ok: false, state: 'none-selected',
     detail: 'No workspace selected — every generation will fail until you pick one. This is what your credits bill to.',
-    workspaces: list.workspaces || [], listError: list.error || null,
+    workspaces: st.workspaces || [], listError: st.listError || null,
     canPickWorkspace: true, fix: 'higgsfield workspace list' };
 }
 

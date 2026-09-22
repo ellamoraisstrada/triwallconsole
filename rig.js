@@ -552,16 +552,35 @@ function rigFromProbe(probe, base) {
   if (typeof m.pitch_deg_per_s === 'number') rig.tiltDegPerSec = +Math.abs(m.pitch_deg_per_s).toFixed(2);
   if (probe && probe.duration_s) rig.durationSec = Math.min(10, Math.round(probe.duration_s));
 
-  // Push rate -> the speed dial, directly. This used to invent a km/h figure
-  // through a stated convention (7.8%/s == 15 km/h) because the dial's unit was
-  // km/h and pixels carry no depth. The dial is a percentage of a measured rate
-  // now, and the probe reports that same kind of rate, so the two meet without
-  // any convention in between: 100% is RIGSPEC.BENCHMARK_DX_RATE per second.
-  if (typeof m.push_rate_pct_per_s === 'number' && Math.abs(m.push_rate_pct_per_s) > 0.5) {
+  // Measured rate -> the speed dial, directly. This used to invent a km/h
+  // figure through a stated convention (7.8%/s == 15 km/h) because the dial's
+  // unit was km/h and pixels carry no depth. The dial is a percentage of a
+  // measured rate now, and the probe reports that same kind of rate, so the
+  // two meet without any convention in between: 100% is RIGSPEC.BENCHMARK_DX_RATE
+  // per second.
+  //
+  // TWO candidate rates, because motion_probe.py's own decomposition (see its
+  // module docstring) splits flow into a differential component (push_rate -
+  // CENTER's radial expansion, real for a push/pull) and a common-mode
+  // component (lateral_frac - uniform flow, real for a truck/yaw). A single-
+  // axis move only ever drives ONE of them: a pure sideways truck has ~zero
+  // radial expansion, so gating on push_rate alone silently left Speed%
+  // untouched on every decoded truck_left/truck_right/yaw_* clip. Taking
+  // whichever magnitude is larger works for both without having to pattern-
+  // match the intent string (and matches classify()'s own reasoning for
+  // picking an intent in the first place).
+  const pushRate = typeof m.push_rate_pct_per_s === 'number' ? m.push_rate_pct_per_s : 0;
+  const lateralRate = typeof m.lateral_frac_per_s === 'number' ? m.lateral_frac_per_s * 100 : 0;
+  const measuredRate = Math.abs(pushRate) >= Math.abs(lateralRate) ? pushRate : lateralRate;
+  if (Math.abs(measuredRate) > 0.5) {
     const benchPctPerSec = require('./rigspec.js').BENCHMARK_DX_RATE * 100;
     rig.speedPct = Math.max(1, Math.min(1000,
-      Math.round(Math.abs(m.push_rate_pct_per_s) / benchPctPerSec * 100)));
+      Math.round(Math.abs(measuredRate) / benchPctPerSec * 100)));
     rig.speedInferred = true;
+    // Read by buildLockedJson (principles.js) to add a "DECODED FROM THE
+    // CLIENT REFERENCE" line to the prompt - it never fired before this,
+    // because nothing ever set this field.
+    rig.decodedRate = Math.abs(measuredRate).toFixed(2) + '%/s measured off the reference clip';
   }
   if (probe && probe.elements) {
     rig.element = Object.assign({}, rig.element, {

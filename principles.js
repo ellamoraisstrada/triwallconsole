@@ -369,6 +369,16 @@ function buildLockedJson(wallId, rig, extras) {
             + 'and never copy the direction of another wall. The three cameras move as one rig, so '
             + 'the timing, the light and the style must match across all three.';
 
+  // A decoded reference overrides the TEMPO only, never the geometry - the
+  // geometry is the room's, the tempo is the client's. rig.decodedRate is set
+  // by RIG.rigFromProbe() when a clip was actually measured (this used to be
+  // read only by cameraTrack()/buildLockedBlock below, which nothing in the
+  // real generation path calls - buildLockedJson's RIGSPEC.cameraJson() output
+  // is what actually ships, so the note has to land here to ever be seen).
+  if (rig && rig.speedInferred && rig.decodedRate && base.camera && base.camera.speed_note) {
+    base.camera.speed_note += ' Decoded from the client reference clip: ' + rig.decodedRate + '.';
+  }
+
   if (extras && typeof extras === 'object') Object.assign(base, extras);
   return base;
 }
