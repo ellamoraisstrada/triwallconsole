@@ -1379,13 +1379,14 @@ function syncSharedParam(kind, param, value){
     if (!el || fieldValueOf(el) === value) return;
     setFieldValueOf(el, value);
   });
-  // Clip seconds is the same number as the model's duration, and the speed
-  // is the same number again in different units.
+  // Clip seconds is the same number as the model's duration - push it into
+  // the rig box too, so the contract states the length the model will
+  // actually render (see pushDuration below for why that has to match).
   if (param === 'duration') {
     const rd = document.getElementById('rigDuration');
     if (rd && Number(rd.value) !== Number(value) && Number(value) >= 1) {
       rd.value = Number(value);
-      linkSpeedAndDuration('duration').catch(() => {});
+      pushDuration().catch(() => {});
     }
   }
 }
@@ -1421,48 +1422,41 @@ document.addEventListener('change', (e) => {
   });
 });
 
-const SPEED_ANCHOR_KMH = 15;    // the two ends of the stated mapping, see above
-const SPEED_ANCHOR_SEC = 5;
-
-// WHOLE NUMBERS ON BOTH SIDES, deliberately. A first pass allowed 2.5 s and
-// produced three different durations at once: the box said 2.5, the contract
-// said 2 (readRigFromForm parseInts it) and the model field said 3. A clip
-// whose contract states a different length than the model renders invalidates
-// every checkpoint in the prompt, which is the exact failure this coupling
-// exists to prevent. Higgsfield durations are integers anyway, and the rig
-// rounds the speed, so both ends round here and the three numbers agree.
-function durationForSpeed(kmh){
-  const v = SPEED_ANCHOR_KMH * SPEED_ANCHOR_SEC / Math.max(0.5, Number(kmh) || SPEED_ANCHOR_KMH);
-  return Math.max(1, Math.min(30, Math.round(v)));
+// SPEED % AND CLIP SECONDS ARE INDEPENDENT DIALS (README §6): rigspec.js
+// states dx_total = dx_per_second x duration, so either one changes only the
+// thing it names. This used to be one COUPLED dial - durationForSpeed()/
+// speedForDuration() converted through a fixed "15 km/h = 5s" anchor left
+// over from an older model where the two really were locked together - but
+// the field has been "Speed %" (range 1-1000) for a while now, and running a
+// percentage through a km/h-scaled formula scrambled whichever box you did
+// NOT just type into (100% -> 1s if you fixed Speed back up; 5s -> 15% if you
+// only meant to lengthen the clip). Because state.rig is one shared object
+// for all three walls (see rig.js), that scrambled number then silently
+// governed every wall's next generation until someone noticed the pace was
+// wrong. Fixed by dropping the conversion entirely - each box now only
+// pushes its own value.
+async function pushSpeed(){
+  await pushRig();
+  await refreshPresetDebug().catch(() => {});
 }
-function speedForDuration(sec){
-  const v = SPEED_ANCHOR_KMH * SPEED_ANCHOR_SEC / Math.max(0.5, Number(sec) || SPEED_ANCHOR_SEC);
-  return Math.max(1, Math.min(120, Math.round(v)));
-}
 
-// Both directions, guarded against each other so setting one does not
-// bounce back and re-set the first.
-let SPEED_LINK_BUSY = false;
-async function linkSpeedAndDuration(from){
-  if (SPEED_LINK_BUSY) return;
-  SPEED_LINK_BUSY = true;
-  try {
-    const sp = document.getElementById('rigSpeed');
-    const du = document.getElementById('rigDuration');
-    if (!sp || !du) return;
-    if (from === 'speed') du.value = durationForSpeed(sp.value);
-    else                  sp.value = speedForDuration(du.value);
-
-    // the model's own duration field on all three walls
+// Duration still has one real side effect beyond the rig box: the MODEL's
+// own duration field on every wall has to match it, because a clip whose
+// contract states a different length than the model actually renders
+// invalidates every checkpoint in the prompt (see README §6). That part of
+// the old coupling was correct and stays - only the speed<->duration
+// conversion is gone.
+async function pushDuration(){
+  const du = document.getElementById('rigDuration');
+  if (du) {
     ['img','vid','refine'].forEach(k => WALLS.forEach(w => {
       const el = document.getElementById(k + 'field-' + w.id + '-duration');
       // Higgsfield durations are whole seconds; the rig can carry a decimal.
-      if (el) el.value = Math.max(1, Math.round(Number(du.value)));   // already integral
+      if (el) el.value = Math.max(1, Math.round(Number(du.value)));
     }));
-
-    await pushRig();                       // rebuilds the contract with both numbers
-    await refreshPresetDebug().catch(() => {});
-  } finally { SPEED_LINK_BUSY = false; }
+  }
+  await pushRig();
+  await refreshPresetDebug().catch(() => {});
 }
 
 function setPill(kind, id, status){
@@ -2634,13 +2628,13 @@ async function pushRig(){
 ['rigIntent','rigYaw','rigTilt','rigElement','rigElementDir','rigElementRate']
   .forEach(id => document.getElementById(id).addEventListener('change', pushRig));
 
-// Speed and Clip seconds are coupled - see durationForSpeed above. Each one
-// writes the other, pushes the rig and re-reads the inspector, so changing
-// the speed visibly changes the prompt rather than only the state.
+// Speed and Clip seconds are independent (see pushSpeed/pushDuration above).
+// Each one pushes the rig and re-reads the inspector, so changing either
+// visibly changes the prompt rather than only the state.
 document.getElementById('rigSpeed')
-  .addEventListener('change', () => linkSpeedAndDuration('speed').catch(() => {}));
+  .addEventListener('change', () => pushSpeed().catch(() => {}));
 document.getElementById('rigDuration')
-  .addEventListener('change', () => linkSpeedAndDuration('duration').catch(() => {}));
+  .addEventListener('change', () => pushDuration().catch(() => {}));
 
 // Changing the preset or the clip length re-reads the inspector immediately, so
 // the numbers visibly change the moment you pick a different move rather than
@@ -3081,13 +3075,14 @@ function renderRigSpeedReadout(spec){
   const over = rows.some(r => r.overSafeCap);
 
   host.innerHTML =
-    '<div class="rsr-head"><strong>Speed km/h</strong> and <strong>Clip seconds</strong> are one dial: '
-    + 'the travel total is fixed by ' + (spec.refClip || 'the reference render') + ', so the same '
-    + 'distance at twice the speed takes half the time (' + SPEED_ANCHOR_KMH + ' km/h = '
-    + SPEED_ANCHOR_SEC.toFixed(1) + ' s; move either box and the other follows, along with every '
-    + 'wall\'s duration). The km/h figure is a stated convention, not a measurement - pixels carry '
-    + 'no depth - and it rides in the contract as the scene-scale reading. The camera/picture lines '
-    + 'below are not sent: the prompt states the picture only.</div>'
+    '<div class="rsr-head"><strong>Speed %</strong> and <strong>Clip seconds</strong> are independent: '
+    + 'Speed is a measured RATE (100% = 8.48% of frame width per second on a side wall, from '
+    + (spec.refClip || 'the reference render') + '), and travel = rate x duration - so doubling the '
+    + 'speed doubles the distance at any clip length, and changing the clip length alone does not '
+    + 'change the pace. Clip seconds also sets every wall\'s own model duration field, since a '
+    + 'contract that states a different length than the model renders invalidates every checkpoint. '
+    + 'There is no km/h anywhere in this - pixels carry no depth, so none was ever measurable. The '
+    + 'camera/picture lines below are not sent: the prompt states the picture only.</div>'
     + '<table class="rsr">' + rows.map(r => {
         const g = r.gloss || {};
         return '<tr><td class="rsr-w">' + r.wall + '</td>'
