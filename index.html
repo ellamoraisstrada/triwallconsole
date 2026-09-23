@@ -568,8 +568,12 @@ table.rsr .rsr-n { color: var(--muted-dim); white-space: nowrap; }
         </select>
       </div>
       <div class="f">
-        <label title="Measured off the fall butterfly: 18.3% of total wall width per second, ~1.8s per wall.">Speed %/sec</label>
+        <label title="Percent of the WHOLE three-wall span crossed per second. One wall is a third of it, so per-wall seconds = 33.3 / this. Measured off the fall butterfly at 18.3%/s (~1.8s per wall); delivered crossings have all run near 11%/s whatever they were asked for.">Speed %/sec</label>
         <input type="number" id="rigElementRate" value="17.5" min="1" step="0.5">
+      </div>
+      <div class="f">
+        <label title="How tall the element is as a percent of the frame height, identical on all three walls. Nothing used to state this, and one delivered set drew small distant owls on one wall and a single close-up owl filling half the frame on another - from the same prompt and the same reference picture.">Size % of height</label>
+        <input type="number" id="rigElementSize" value="12" min="1" max="90" step="1">
       </div>
       <div class="f" style="min-width:210px;">
         <label title="Sent to Higgsfield as an extra reference on all three walls, so the thing that crosses is the same object on each - not three different inventions of the same description.">Reference picture</label>
@@ -723,6 +727,10 @@ let rigRulesCache = { left:'', center:'', right:'' };
 // actually sent for video now; rigRulesCache stays as the prose view.
 let rigRulesJsonCache = { left:null, center:null, right:null };
 let rigState = null;
+// The server's element timetable (rigspec.elementSchedule for all three walls,
+// in journey order). Cached here so the timeline table renders the SAME numbers
+// the prompts carry rather than a second guess at them.
+let elementPlanCache = null;
 
 // A dead server and a failing API call are completely different problems, and
 // until now both surfaced as the browser's bare "Failed to fetch" — which then
@@ -2966,7 +2974,13 @@ function readRigFromForm(){
       subject,
       direction: el('rigElementDir').value,
       ratePctPerSec: Math.max(1, parseFloat(el('rigElementRate').value) || 17.5),
-      perWallSec: +(33.3 / Math.max(1, parseFloat(el('rigElementRate').value) || 17.5)).toFixed(2),
+      sizePctOfHeight: Math.min(90, Math.max(1, parseFloat(el('rigElementSize').value) || 12)),
+      // perWallSec is NOT sent any more. The page worked it out as 33.3/rate
+      // and rig.js stored a flat 1.9s, so whichever of the two a reader
+      // happened to consult decided the timing, and moving the rate box
+      // changed one of them and not the other. rigspec.elementSchedule is the
+      // only place it is computed now, and it also checks the crossing fits
+      // inside the clip - which at the default rate it did not.
       entrySec: 2.0,
     },
   };
@@ -2985,6 +2999,7 @@ function writeRigToForm(rig){
   el('rigElement').value = c.subject || '';
   el('rigElementDir').value = c.direction || 'right_to_left';
   el('rigElementRate').value = c.ratePctPerSec ?? 17.5;
+  el('rigElementSize').value = c.sizePctOfHeight ?? 12;
   try { renderElementRef(); } catch (e) {}
   rigFieldVisibility(RIGMOVE_NORMALISE(rig.intent));
 }
@@ -3015,6 +3030,7 @@ function applyRigResponse(data){
     refreshImageFixedRulesDisplay();
   }
   rigState = data.rig || rigState;
+  if ('elementPlan' in data) elementPlanCache = data.elementPlan;
   document.getElementById('rigSummary').textContent = data.summary ? `Rig: ${data.summary}` : '';
   const note = (data.applied && data.applied.calibrationNote) || '';
   const law = data.rules && data.rules.center
@@ -3035,7 +3051,7 @@ async function pushRig(){
   }
 }
 
-['rigIntent','rigYaw','rigTilt','rigElement','rigElementDir','rigElementRate']
+['rigIntent','rigYaw','rigTilt','rigElement','rigElementDir','rigElementRate','rigElementSize']
   .forEach(id => document.getElementById(id).addEventListener('change', pushRig));
 
 // Speed and Clip seconds are independent (see pushSpeed/pushDuration above).
@@ -3538,27 +3554,34 @@ function esc(t){ return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;'); 
 // confidence if you can see the hand-off times.
 function renderElementTimeline(rig){
   const wrap = document.getElementById('elementTimeline');
+  // THE SCHEDULE COMES FROM THE SERVER. This function used to work it out here
+  // from c.perWallSec, which was a THIRD copy of the same arithmetic (the page
+  // wrote 33.3/rate, rig.js kept a flat 1.9s, principles.js read whichever it
+  // was handed). They disagreed, so the timetable on screen was not necessarily
+  // the timetable in the prompt. rigspec.elementSchedule is the only copy now,
+  // and it also refuses a crossing that does not fit inside the clip.
+  const plan = elementPlanCache;
   const c = rig && rig.element;
-  if (!c || !c.enabled || !c.subject) { wrap.innerHTML = ''; return; }
-  const dir = c.direction === 'left_to_right' ? 'left_to_right' : 'right_to_left';
-  const order = dir === 'right_to_left' ? ['right','center','left'] : ['left','center','right'];
-  const perWall = c.perWallSec || 1.9;
-  const entry = c.entrySec != null ? c.entrySec : 2.0;
-  const enterEdge = dir === 'right_to_left' ? 'RIGHT' : 'LEFT';
-  const exitEdge  = dir === 'right_to_left' ? 'LEFT' : 'RIGHT';
-  const rows = order.map((w, i) => {
-    const inAt = (entry + i * perWall).toFixed(2);
-    const outAt = (entry + (i + 1) * perWall).toFixed(2);
-    return `<tr><td>${i + 1}</td><td><b>${w}</b></td><td class="num">${inAt}s</td>` +
-           `<td class="num">${outAt}s</td><td>enters ${enterEdge}, exits ${exitEdge}</td></tr>`;
-  }).join('');
-  const total = (entry + 3 * perWall).toFixed(2);
+  if (!plan || !plan.rows || !plan.rows.length || !c || !c.enabled || !c.subject) {
+    wrap.innerHTML = ''; return;
+  }
+  const rows = plan.rows.map((r, i) =>
+    `<tr><td>${i + 1}</td><td><b>${r.wall}</b></td><td class="num">${r.inAt.toFixed(2)}s</td>` +
+    `<td class="num">${r.outAt.toFixed(2)}s</td><td>enters ${r.enterEdge}, exits ${r.exitEdge}</td></tr>`
+  ).join('');
+  const first = plan.rows[0], last = plan.rows[plan.rows.length - 1];
+  const count = first.count != null ? first.count : null;
+  const warn = (plan.notes && plan.notes.length)
+    ? `<div class="rsr-warn">${esc(plan.notes.join(' '))}</div>` : '';
   wrap.innerHTML = `<table class="stat">` +
     `<tr><th>#</th><th>Wall</th><th class="num">On</th><th class="num">Off</th><th>Edges</th></tr>` +
-    rows + `</table>` +
-    `<div class="statusline" style="margin-top:6px;">One ${c.subject}, ${dir.replace(/_/g,'-')}, ` +
-    `${perWall}s per wall — clear of the rig by ${total}s. Each wall is told it is already mid-flight and ` +
-    `cut off by the frame edge, so the hand-offs join up instead of three objects starting and stopping.</div>`;
+    rows + `</table>` + warn +
+    `<div class="statusline" style="margin-top:6px;">` +
+    `${count != null ? count + ' x ' : ''}${esc(first.subject)}, ` +
+    `${first.direction.replace(/_/g,'-')}, at ${first.ratePctPerSec}% of the room per second — ` +
+    `${first.perWallSec}s on each wall, ${first.sizePctOfHeight}% of frame height, clear of the ` +
+    `rig by ${last.outAt.toFixed(2)}s of a ${first.durationSec}s clip. Each wall is told it is already mid-flight and cut off by the frame ` +
+    `edge, and told in frames exactly when it must not be there at all.</div>`;
 }
 
 // The element's reference picture. Stored once on the rig, not per wall -
@@ -3848,8 +3871,16 @@ async function loadRigRules(){
   if (!sel.options.length) {
     sel.innerHTML = Object.entries(data.intents).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
   }
+  // rigState FIRST. writeRigToForm calls renderElementRef(), which reads the
+  // element's picture out of rigState - and on a fresh page load rigState was
+  // still null at that point, so the row said "none" even with a picture
+  // attached, and generate() (which reads the same field) attached nothing.
+  // Until someone touched a rig control, the element reference did not exist as
+  // far as the page was concerned.
+  rigState = data.rig || rigState;
   writeRigToForm(data.rig);
   applyRigResponse(data);
+  try { renderElementTimeline(data.rig); } catch (e) {}
 }
 
 // ================= LAYOUT: COLLAPSE + DISCLOSURE =================

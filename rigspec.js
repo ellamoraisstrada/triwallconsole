@@ -85,6 +85,19 @@ const WALL_H = { left: 1600, center: 1920, right: 1600 };
 // room has nearer objects), not rig behaviour. Raw readings sit in the comment
 // beside each line so nothing is hidden.
 const MOVES = {
+  // RIGHT WALL DIRECTION: OWNER-CONFIRMED TWICE, FROM DELIVERED OUTPUT.
+  // 2026-09-23, first after the direction rewrite ("right motion is fixed, it's
+  // looking nice for push in"), then again off a later clip that travelled
+  // toward frame RIGHT (measured dx +0.083 over 5.04s): "this is a good
+  // generation for C_PushIn ... make sure the camera motion for right wall does
+  // what it's doing right now when C_PushIn is selected."
+  //
+  // The table below ALREADY says that - right: dx +0.61, i.e. toward frame
+  // RIGHT, toward the outer end of the room - so nothing here needed changing;
+  // it is recorded so that it does not get "fixed" later. The amplitude is a
+  // separate question and is NOT taken from that clip: +0.083 is 19% of the
+  // 0.428 the contract asked for, and shrinking the preset to match a delivery
+  // that undershot would bake the undershoot in permanently.
   C_PushIn: {
     label: 'C_PushIn — the rig travels forward into the room',
     refClip: 'C_PushIn.mp4', refDur: 1.93,
@@ -96,6 +109,15 @@ const MOVES = {
       right:  { dx: +0.61, dy: 0, scale: 1.10, roll: 0 },
     },
   },
+  // AND C_PushOut IS ITS EXACT REVERSE, which is what the table says (left
+  // +0.61, right -0.61 - each side mirrored against push-in) and what the owner
+  // asked for: "C_PushOut should be the opposite of how the camera is moving."
+  // The RIGHT wall has not delivered it yet. Three measured attempts, all
+  // travelling toward frame RIGHT when asked for LEFT: +0.233, then +0.083
+  // after direction_check replaced the depth-based wording. The rewrite took the
+  // wrong-way magnitude down but did not turn it round, so prompting is not the
+  // lever here - compare() now points at Lock motion for a wrong-way wall, the
+  // same advice it already gave for one that barely moves.
   C_PushOut: {
     label: 'C_PushOut — the rig withdraws backward out of the room',
     refClip: 'C_PushOut.mp4', refDur: 1.83,
@@ -615,7 +637,16 @@ function compare(moveId, wallId, measured, speedPct, centrePct) {
     const ratio = Math.abs(measured.dxTotal) / Math.abs(want.dxTotal);
     row.dx.ratio = round(ratio, 2);
     row.dx.sameDirection = sameDir;
-    if (!sameDir && Math.abs(measured.dxTotal) > 0.05) row.problems.push('travelling the WRONG WAY');
+    // WRONG WAY GETS THE SAME ADVICE AS TOO-WEAK, and it had not been getting
+    // it. The right wall has now come back the wrong way on three measured
+    // C_PushOut sets in a row (+0.233, then +0.083 after the direction field was
+    // rewritten, against an ask of -0.428). Rewording is what has already been
+    // tried; a start/end frame pair makes the translation a geometric fact
+    // rather than a request, which is the whole reason Lock motion exists.
+    if (!sameDir && Math.abs(measured.dxTotal) > 0.05) {
+      row.problems.push('travelling the WRONG WAY - press Lock motion on this wall and regenerate; '
+        + 'prompting alone has not turned it round');
+    }
     else if (ratio < 0.5) row.problems.push('travelling only ' + Math.round(ratio * 100)
       + '% as far as the preset - press Lock motion on this wall and regenerate; prompting '
       + 'alone has not moved it');
@@ -764,6 +795,136 @@ function anchorsFor(dxTotal) {
 const WALL_YAW = { left: -90, center: 0, right: 90 };
 const CANVAS_X = { left: 0, center: 3840, right: 8000 };
 
+// ------------------------------------------------- THE TRAVELLING ELEMENT ---
+// One object crossing all three walls as a single journey, so an audience at
+// the one eyepoint follows it with their head instead of watching three
+// unrelated clips. The timetable lives here, beside the camera figures, for the
+// same reason every other number moved here: the page computed one version of
+// it (33.3 / rate) and rig.js stored another (a flat 1.9s), so moving the rate
+// box changed one of them and not the other, and nothing ever compared them.
+//
+// `ratePctPerSec` is a percentage of the WHOLE three-wall span per second. One
+// wall is a third of the span, so
+//     per_wall_seconds = (100 / 3) / rate
+//     whole_crossing   = 100 / rate
+// and 17.5%/s is the 1.90s-per-wall, 5.71s-total figure measured off the
+// reference butterfly.
+
+// How many of them there are, when the subject box says so. "5 large Owl" is
+// five owls, and the contract used to answer that with "This is ONE 5 large
+// Owl" - a sentence that tells the generator the count is both five and one.
+function elementCount(subject) {
+  const s = String(subject == null ? '' : subject).trim();
+  const digits = s.match(/^(\d{1,3})\b/);
+  if (digits) return parseInt(digits[1], 10);
+  const WORDS = { a: 1, an: 1, one: 1, single: 1, lone: 1, two: 2, pair: 2, three: 3, four: 4,
+                  five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12 };
+  const first = s.split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
+  return WORDS[first] != null ? WORDS[first] : null;
+}
+
+/**
+ * The element's timetable for ONE wall, or null if no element is configured.
+ * Everything is derived from the rate and the clip length - nothing is read
+ * back off the form, because two places computing it is how they drifted.
+ */
+function elementSchedule(rig, wallId) {
+  const c = (rig && rig.element) || {};
+  if (!c.enabled || !String(c.subject || '').trim()) return null;
+
+  const dur = Math.max(1, Number(rig && rig.durationSec) || 5);
+  const askedRate = Number(c.ratePctPerSec);
+  const rate = (Number.isFinite(askedRate) && askedRate > 0) ? askedRate : 17.5;
+  const dir = c.direction === 'left_to_right' ? 'left_to_right' : 'right_to_left';
+  const order = dir === 'right_to_left' ? ['right', 'center', 'left'] : ['left', 'center', 'right'];
+  const idx = order.indexOf(wallKey(wallId));
+  if (idx < 0) return null;
+
+  const askedTotal = round(100 / rate, 2);
+  let perWall = (100 / 3) / rate;
+  let entry = Number.isFinite(Number(c.entrySec)) ? Number(c.entrySec) : 2.0;
+  let fittedRate = null;
+  const notes = [];
+
+  // THE CROSSING HAS TO FIT INSIDE THE CLIP, AND AT THE DEFAULT IT DID NOT.
+  // 17.5%/s is a 5.71s crossing. Entering at 2.0s of a 5s clip put the third
+  // wall's slot at 5.71s-7.61s - a window outside its own clip. That wall was
+  // being given an instruction it could not obey and no one was told, so it
+  // showed the element whenever it felt like it, which is exactly the "it
+  // repeats / it is on screen the whole time" report.
+  if (askedTotal > dur) {
+    fittedRate = round(100 / dur, 1);
+    perWall = dur / 3;
+    entry = 0;
+    notes.push('A ' + rate + '%/s crossing takes ' + askedTotal + 's, which does not fit a '
+             + dur + 's clip - the element would never reach the far wall. Paced to fit instead: '
+             + fittedRate + '%/s, entering at 0s.');
+  } else if (round(entry + askedTotal, 2) > dur) {
+    entry = round(dur - askedTotal, 2);
+    notes.push('Entry moved to ' + entry + 's so the whole crossing finishes inside the '
+             + dur + 's clip.');
+  }
+
+  // AND IT HAS TO BE A PACE A CROSSING CAN ACTUALLY BE DRAWN AT. Measured on
+  // the delivered set of 2026-09-23: the contract asked for 0.95s per wall
+  // (35%/s) and every wall drew a crossing of roughly 3 seconds instead - the
+  // right wall let the owls in at 2.0s exactly as asked and still had them on
+  // screen at 5.0s. Below about 1.5s per wall the generator substitutes its own
+  // pacing, so say so rather than quietly asking for something that gets
+  // overruled. ~11%/s is what the delivered crossings actually ran at.
+  if (perWall < 1.5) {
+    notes.push('At ' + round(fittedRate || rate, 1) + '%/s each wall gets only ' + round(perWall, 2)
+             + 's. Every delivered crossing so far has been drawn at about 3s per wall (~11%/s) '
+             + 'whatever it was asked for, so expect this to be overruled. A three-wall crossing at '
+             + 'a believable pace needs roughly a ' + Math.ceil(3 * 3 + 1) + 's clip.');
+  }
+
+  const enterEdge = dir === 'right_to_left' ? 'RIGHT' : 'LEFT';
+  const exitEdge = dir === 'right_to_left' ? 'LEFT' : 'RIGHT';
+  const inAt = round(entry + idx * perWall, 2);
+  const outAt = round(inAt + perWall, 2);
+
+  // HOW BIG IT IS. Nothing stated this, and the delivered set showed exactly
+  // what happens: the same prompt and the same reference picture produced small
+  // distant owls on the right wall, mid-sized ones on the centre, and on the
+  // left wall ONE bird in close-up filling half the frame. Size was never asked
+  // for, so each wall chose its own - and a travelling element only reads as one
+  // journey if it is the same size on all three.
+  const askedSize = Number(c.sizePctOfHeight);
+  const sizePct = (Number.isFinite(askedSize) && askedSize > 0) ? Math.min(90, askedSize) : 12;
+
+  // WHERE IT IS, SECOND BY SECOND. Entry and exit times alone were treated as
+  // loose cues: on the delivered set the right wall let them in at 2.0s as asked
+  // and then still had them on screen at 5.0s, having ignored a 2.95s exit
+  // entirely. The camera half of this contract is obeyed because it is given as
+  // a position at a time rather than a pair of cues, so the element gets the
+  // same treatment. x is the element's centre, 0 = left edge, 1 = right edge,
+  // and the values outside 0..1 are where it is still clear of the frame.
+  const xIn = enterEdge === 'RIGHT' ? 1.12 : -0.12;
+  const xOut = exitEdge === 'RIGHT' ? 1.12 : -0.12;
+  const xs = [];
+  for (let k = 0; k <= 4; k++) {
+    const f = k / 4;
+    xs.push([round(inAt + f * perWall, 2), round(xIn + f * (xOut - xIn), 2)]);
+  }
+
+  return {
+    sizePctOfHeight: sizePct, xPath: xs,
+    subject: String(c.subject).trim(),
+    count: elementCount(c.subject),
+    direction: dir, order: order, wall: wallKey(wallId), index: idx, lastIndex: 2,
+    ratePctPerSec: fittedRate || rate,
+    ratePctPerSecAsked: rate, ratePctPerSecFitted: fittedRate,
+    perWallSec: round(perWall, 2), totalSec: round(perWall * 3, 2),
+    entrySec: round(entry, 2), durationSec: dur, fps: FPS,
+    enterEdge: enterEdge, exitEdge: exitEdge, inAt: inAt, outAt: outAt,
+    inFrame: Math.round(inAt * FPS), outFrame: Math.round(outAt * FPS),
+    lastFrame: Math.round(dur * FPS),
+    refPath: c.refPath || null,
+    notes: notes,
+  };
+}
+
 // WHAT A GENERATOR IS TOLD NOT TO DO. Twelve lines, not fifty.
 //
 // The previous list ran to fifty entries inside a 9.5KB contract, and the
@@ -772,11 +933,30 @@ const CANVAS_X = { left: 0, center: 3840, right: 8000 };
 // its background at 5% of the frame rate. Long inputs get attended to in the
 // middle least of all, and the important constraints were in the middle.
 // Everything here is something a delivered clip has actually got wrong.
-function negativePrompt(sp) {
+// WHEN A TRAVELLING ELEMENT IS CONFIGURED, FOUR OF THESE FORBID IT.
+// "no object travels across the picture on its own", "nothing added: no new
+// object, character...", "characters keep their exact design, count and facing"
+// and the wrong-edge rule each describe precisely what the element does. The
+// contract was ordering the generator to draw it and not to draw it in the same
+// breath, and a contradicted rule is one a model settles by guessing - which is
+// how the element came back repeating, or sitting in frame the whole clip, or
+// not appearing at all. Each exemption NAMES the element rather than softening
+// the rule, so everything that is not the element stays exactly as locked.
+function negativePrompt(sp, el) {
   const n = [];
+  // Short on purpose: the window and the subject are stated once, in
+  // travelling_element. Repeating them across four negatives cost 500
+  // characters of a contract already over its size budget, and an oversized
+  // contract gets its middle ignored - the exact failure this file exists for.
+  const ex = el ? ' (travelling_element excepted, ' + el.inAt + '-' + el.outAt + 's)' : '';
   if (sp.towardEdge) {
     const wrong = sp.towardEdge === 'LEFT' ? 'RIGHT' : 'LEFT';
-    n.push('nothing travels toward the ' + wrong + ' edge - not one object, not the crowd');
+    // The element may legitimately cross against the camera: a right-to-left
+    // element on a wall whose picture travels right does exactly that, and on a
+    // push-in right wall it does. Only exempt it when it actually clashes.
+    const clash = !!el && el.exitEdge === wrong;
+    n.push('nothing travels toward the ' + wrong + ' edge - not one object, not the crowd'
+         + (clash ? ex : ''));
   }
   // Outside the direction test on purpose: a centre wall on a dolly has dx = 0,
   // so these two used to be omitted and its contract carried no rule against an
@@ -784,7 +964,7 @@ function negativePrompt(sp) {
   if (sp.kind !== 'static') {
     n.push('the background is never still while the foreground moves');
     n.push('no object travels across the picture on its own - the picture is what moves, and '
-         + 'nothing changes its position within the scene');
+         + 'nothing changes its position within the scene' + ex);
   }
   if (Math.abs(sp.scaleTotal - 1) < zoomDeadzone(sp.wall)) {
     n.push('no zoom, no dolly, nothing gets bigger or smaller');
@@ -792,9 +972,11 @@ function negativePrompt(sp) {
   if (Math.abs(sp.dxTotal) < 0.02) n.push('no sideways drift, no pan');
   n.push('no held frame and no jump - the motion is continuous from frame 1 to the last frame');
   n.push('no roll, no tilt, no yaw, no camera shake');
-  n.push('nothing added: no new object, character, crowd, sign, text, confetti, sparkle, particle, weather or light');
+  n.push('nothing added: no new object, character, crowd, sign, text, confetti, sparkle, particle, '
+       + 'weather or light' + ex);
   n.push('nothing removed, redrawn, restyled or recoloured');
-  n.push('characters keep their exact design, count and facing');
+  n.push('characters keep their exact design, count and facing'
+       + (el ? ' - the travelling element is not one of them and is not in the scene already' : ''));
   n.push('the horizon stays at the same height in every frame');
   n.push('no cut, no dissolve, no speed ramp, no ease');
   return n;
@@ -844,6 +1026,10 @@ function sizeWords(scaleTotal, deadzone) {
  */
 function cameraJson(moveId, wallId, durationSec, opts) {
   const sp = spec(moveId, wallId, durationSec, opts && opts.speedPct, opts && opts.centrePct);
+  // The element's timetable for THIS wall, if one is configured. The negatives
+  // and the revealed-edge band both need it, because both of them otherwise
+  // forbid the element outright.
+  const el = (opts && opts.element) || null;
   const zooms = Math.abs(sp.scaleTotal - 1) >= zoomDeadzone(sp.wall);
   const scaleEnd = zooms ? sp.scaleTotal : 1.0;
   const sz = sizeWords(scaleEnd, zoomDeadzone(sp.wall));
@@ -930,11 +1116,19 @@ function cameraJson(moveId, wallId, durationSec, opts) {
                     + 'these positions. Outside 0..1 means it has left frame by then.';
 
   if (sp.towardEdge) {
+    const revealed = sp.towardEdge === 'RIGHT' ? 'LEFT' : 'RIGHT';
     out.revealed_edge = {
-      edge: sp.towardEdge === 'RIGHT' ? 'LEFT' : 'RIGHT',
+      edge: revealed,
       width_by_end: round(Math.abs(sp.dxTotal), 3),
+      // The element enters through one of the frame edges, and on some walls
+      // that is this band. "Put no new object in this band" and "the element
+      // enters at the RIGHT edge at 2.0s" were flatly contradicting each other
+      // on exactly the walls where the two edges coincide.
       fill: 'continue the material right next to it - the same floor, wall, sky or crowd. Put no '
-          + 'new object, character or feature in this band.',
+          + 'new object, character or feature in this band.'
+          + (el && el.enterEdge === revealed
+              ? ' The travelling element crosses this edge at ' + el.inAt + 's and is not band fill.'
+              : ''),
     };
   }
 
@@ -966,14 +1160,50 @@ function cameraJson(moveId, wallId, durationSec, opts) {
   // LEFT. Anchoring travel to the visible vanishing direction therefore comes
   // out mirrored on its own, from a rule that only ever talks about this one
   // frame. Same reason `perspective` works and never needed a sibling either.
-  if (sp.wall !== 'center' && sp.towardEdge) {
+  // ...AND THEN IT SENT THE PUSH-OUT SET THE WRONG WAY. Measured 2026-09-23,
+  // C_PushOut at 100% / centre 25%, one set of three:
+  //
+  //     wall     asked dx     measured dx
+  //     LEFT       +0.424        +0.064     right way, 15% of the distance
+  //     CENTER      scale 0.896   scale 0.790  right way, 2.15x too much
+  //     RIGHT      -0.424        +0.233     WRONG WAY - it performed a push in
+  //
+  // The mechanism is the premise, not the conclusion. This field asserts where
+  // depth lies in the supplied picture, and on both side plates it asserted the
+  // opposite of what the plate shows: the right wall's image has its nearest,
+  // largest mass (the towers) at its LEFT edge, and the left wall's at its
+  // RIGHT - in both, the near end is the SEAM, not the outer end. Told "the
+  // nearest things sit at your RIGHT edge" by text and the reverse by the
+  // picture, the right wall believed the picture, followed "travel into the
+  // depth" toward what IT could see was far, and came out backwards.
+  //
+  // So the direction is no longer DERIVED from a depth reading the tool has not
+  // verified. It is stated in frame terms, which need no premise and can be
+  // checked against the result: which edge everything leaves by, and which edge
+  // uncovers new material. `perspective` below still describes the intended
+  // geometry of the set - the owner approved that and it is untouched - it just
+  // no longer decides which way the camera goes.
+  //
+  // C_PushIn IS DELIBERATELY LEFT EXACTLY AS IT WAS. The owner confirmed it
+  // from delivered output ("right motion is fixed, it's looking nice for push
+  // in") after three wrong-way sets, and asked for it not to be touched. Its
+  // contract is byte-identical to before this change; only the side walls on a
+  // move that travels toward the SEAM - which is push-out - get the new field.
+  if (sp.wall !== 'center' && sp.towardEdge && !sp.towardSeam) {
     out.direction_from_perspective =
       'Read the direction off this image: the world recedes toward its ' + sp.seamEdge
       + ' edge and the nearest, largest things sit at its ' + sp.outerEdge + ' edge. '
-      + (sp.towardSeam
-          ? 'The picture travels INTO that depth, toward the far ' + sp.seamEdge + ' end.'
-          : 'The picture travels OUT of that depth, off the near ' + sp.outerEdge + ' end - the closest '
-            + 'things leave frame first.');
+      + 'The picture travels OUT of that depth, off the near ' + sp.outerEdge + ' end - the closest '
+      + 'things leave frame first.';
+  } else if (sp.wall !== 'center' && sp.towardEdge) {
+    const away = sp.towardEdge;
+    const into = away === 'LEFT' ? 'RIGHT' : 'LEFT';
+    out.direction_check =
+      'DIRECTION - in frame terms only. Do not work it out from the perspective of the picture. '
+      + 'Everything visible at 0s moves toward the ' + away + ' edge and whatever is against that '
+      + 'edge at 0s is out of frame by the end. The band along the ' + into + ' edge, '
+      + Math.round(Math.abs(sp.dxTotal) * 100) + '% of the frame wide, is material from outside the '
+      + 'frame. If anything finishes nearer the ' + into + ' edge than it started, it is backwards.';
   }
 
   if (sp.wall !== 'center') {
@@ -1012,7 +1242,7 @@ function cameraJson(moveId, wallId, durationSec, opts) {
   }
   out.rig_context.your_wall = sp.wall;
 
-  out.never = negativePrompt(sp);
+  out.never = negativePrompt(sp, el);
   return out;
 }
 
@@ -1023,5 +1253,5 @@ module.exports = {
   cameraGloss,
   MOVES, REF_VIEW_PX, WALL_PX, WALL_H, FPS, SAFE_PX_PER_FRAME, BENCHMARK_DX_RATE,
   normalise, spec, posAt, posAtY, landmarkRows, numericBlock, inspector, presetIds, compare, paceMatch,
-  cameraJson, travelWord, anchorsFor,
+  cameraJson, travelWord, anchorsFor, elementSchedule, elementCount,
 };

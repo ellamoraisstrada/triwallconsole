@@ -229,6 +229,22 @@ function recordInLibrary(st, entry) {
   return entry;
 }
 
+// The element's timetable for all three walls, in journey order, so the page
+// can SHOW the schedule instead of working out its own version of it. The page
+// had its own copy of this arithmetic and rig.js had a third; the three
+// disagreed, and the one the generator actually used was whichever happened to
+// be consulted last.
+function elementPlan(rig) {
+  const RIGSPEC = require('./rigspec.js');
+  const probe = RIGSPEC.elementSchedule(rig, 'center');
+  if (!probe) return null;
+  return {
+    order: probe.order,
+    rows: probe.order.map(w => RIGSPEC.elementSchedule(rig, w)),
+    notes: probe.notes,
+  };
+}
+
 function pruneHistory(st) {
   if (!st || !st.history) return st;
   for (const w of Object.keys(st.history)) {
@@ -1630,17 +1646,61 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
         const rec = (state.library || []).find(r => r.url === state.walls[w].genVideoUrl) || {};
         const sp = rec.speedPct || applied.speedPct;
         const cp = rec.centrePct || applied.centrePct;
-        const row = RIGSPEC.compare(moveId, w, got, sp, cp);
+        // GRADE EACH CLIP AGAINST THE MOVE IT WAS MADE UNDER, not against
+        // whatever the dropdown says now. This was measured on 2026-09-23: a
+        // C_PushOut set was graded against C_PushIn because the preset had been
+        // switched back afterwards, and the verdict came out exactly inverted -
+        // the two walls that had obeyed were reported "travelling the WRONG
+        // WAY" and "zooming the WRONG WAY", and the one wall that really had
+        // performed a push in was passed as correct. The Library has recorded
+        // the move per clip all along; nothing was reading it.
+        const mv = RIGSPEC.normalise(rec.move || moveId);
+        const row = RIGSPEC.compare(mv, w, got, sp, cp);
+        row.move = mv;
+        row.moveFrom = rec.move ? 'generation' : 'current';
         row.dialsFrom = rec.speedPct ? 'generation' : 'current';
         if (w === 'center') out.centrePct = cp || 100;
         cmp.push(row);
       }
       out.comparison = cmp;
+      // Say so plainly when the clips on the wall are not the preset that is
+      // selected now. Silently grading them against the dropdown is what
+      // produced an inverted verdict nobody could argue with.
+      const graded = Array.from(new Set(cmp.map(r => r.move))).filter(Boolean);
+      if (graded.length) {
+        out.gradedAgainst = graded.length === 1 ? graded[0] : graded;
+        if (graded.length > 1) {
+          out.notes.push('These clips were not all generated under the same preset ('
+            + cmp.map(r => r.wall.toUpperCase() + ' = ' + r.move).join(', ')
+            + '). Each is graded against its own, but they will not stitch as one move.');
+        } else if (graded[0] !== moveId) {
+          out.notes.push('The preset selected now is ' + moveId + ', but these clips were generated '
+            + 'under ' + graded[0] + '. They are graded against ' + graded[0] + ' - what they were '
+            + 'actually asked to do.');
+        }
+      }
       if (cmp.some(r => r.dialsFrom === 'current')) {
         out.notes.push('Some clips predate dial recording and are compared against the CURRENT speed '
                      + '(' + applied.speedPct + '%) - if the dial has moved since they were made, their '
                      + 'distance figures are off by that ratio. The centre-pace check is a ratio between '
                      + 'walls and is unaffected.');
+      }
+      // THE ELEMENT EATS THE CAMERA MOVE. Measured 2026-09-23 on the first set
+      // generated with a travelling element actually reaching the contract:
+      // both side walls collapsed to dx 0.09 and 0.08 against an ask of 0.43,
+      // the left wall's background ratio fell to 0.28 (a static plate), and the
+      // owls flew across anyway. Given something to animate, the generator
+      // animates it and leaves the plate alone. Worth naming, because the
+      // obvious reading of "the sides barely moved" is that the speed dial is
+      // wrong, and it is not - the same dial moved them before.
+      const elOn = !!(state.rig && state.rig.element && state.rig.element.enabled
+                      && state.rig.element.subject);
+      const sideRows = cmp.filter(r => r.wall !== 'center' && r.dx && r.dx.ratio > 0);
+      if (elOn && sideRows.length === 2 && sideRows.every(r => r.dx.ratio < 0.5)) {
+        out.notes.push('Both side walls came in under half the asked-for travel while a travelling '
+          + 'element was in the contract. Given an object to animate, the generator has repeatedly '
+          + 'spent the motion on the object and left the plate nearly still. Test the camera on its '
+          + 'own first - remove the element, get the move measuring right, then put it back.');
       }
       out.pace = RIGSPEC.paceMatch(cmp, out.centrePct);
       if (out.pace && !out.pace.matched) out.notes.push(out.pace.note);
@@ -1650,7 +1710,7 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       else if (!bad.length) {
         out.verdict = 'match';
         out.notes.push('All ' + cmp.length + ' measured wall' + (cmp.length === 1 ? '' : 's') + ' perform '
-          + moveId + ' within tolerance: direction, distance travelled, scale change and roll all agree '
+          + (out.gradedAgainst || moveId) + ' within tolerance: direction, distance travelled, scale change and roll all agree '
           + 'with the preset.');
       } else {
         out.verdict = bad.some(c => c.problems.some(t => /WRONG WAY|static plate/.test(t))) ? 'mismatch' : 'off-spec';
@@ -2532,8 +2592,24 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
     // ---- rig spec: one camera intent, all three walls derived from it ----
     if (req.method === 'POST' && p === '/api/rig') {
       const body = JSON.parse((await readBody(req)).toString('utf8'));
+      // THE ELEMENT'S UPLOADED PICTURE MUST SURVIVE A FORM PUSH.
+      //
+      // `refPath` is written by /api/element-ref and is owned by the server —
+      // the page never sends it back, because readRigFromForm only knows about
+      // the boxes on screen (enabled, subject, direction, rate, perWall, entry).
+      // The whole rig object it sends therefore contains an `element` with NO
+      // refPath, and Object.assign REPLACES a nested object wholesale rather
+      // than merging into it. So uploading the element picture worked, and then
+      // touching any rig control at all — speed, duration, even the subject box
+      // the element itself needs — silently wiped the path. The file stayed on
+      // disk; the tool just forgot where it was, and generate() then saw no
+      // refPath and attached nothing.
+      const keptRef = (state.rig && state.rig.element && state.rig.element.refPath) || null;
       state.rig = Object.assign(state.rig || RIG.defaultRig(), body.rig || body);
       if (body.element) state.rig.element = Object.assign(state.rig.element || {}, body.element);
+      if (state.rig.element && !state.rig.element.refPath && keptRef) {
+        state.rig.element.refPath = keptRef;
+      }
       // Keep the legacy field in sync so anything still reading it behaves.
       state.videoMotionMode = state.rig.intent === 'hold' ? 'idle' : 'moving';
       saveState();
@@ -2541,6 +2617,7 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       return sendJson(res, 200, {
         ok: true, rig: state.rig, applied,
         summary: RIG.describeRig(applied),
+        elementPlan: elementPlan(applied),
         // `rules` - the same contract as prose - used to ride along here at
         // 18KB per response. Nothing rendered it once the contract became
         // JSON, and the one thing that still read it (the inspector's "has
@@ -2557,6 +2634,7 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       const applied = LEARN.applyCalibration(state.calibration, state.rig || RIG.defaultRig());
       return sendJson(res, 200, {
         rig: state.rig, applied, summary: RIG.describeRig(applied),
+        elementPlan: elementPlan(applied),
         targets: RIG.RIG_TARGETS, geometry: RIG.RIG_GEOMETRY, intents: RIG.INTENTS,
         locks: rigLockPayload(applied),
         // `rules` - the same contract as prose - used to ride along here at
