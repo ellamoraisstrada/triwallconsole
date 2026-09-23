@@ -1834,9 +1834,12 @@ const PLAYER_MARKUP = `
         <button class="btn ghost small" id="playerClearBtn">Clear all</button>
         <span class="statusline" id="playerTransportStatus" style="margin:0;"></span>
       </div>
+      <div class="statusline" id="playerTimingStatus" style="margin:6px 0 0;"></div>
     </div>
     <div id="playerGrid" class="libgrid"></div>
   </div>`;
+
+const PLAYER_MAX = 3;   // matches the tool's own output: one clip per wall (L/C/R)
 
 let playerItems = [];   // { id, label, url, isLocal }
 let playerSeq = 0;
@@ -1844,11 +1847,22 @@ let playerSeq = 0;
 function renderPlayerGrid(){
   const grid = document.getElementById('playerGrid');
   if (!grid) return;
+  const atMax = playerItems.length >= PLAYER_MAX;
   const countEl = document.getElementById('playerCount');
-  if (countEl) countEl.textContent = playerItems.length + (playerItems.length === 1 ? ' clip loaded' : ' clips loaded');
+  if (countEl) {
+    countEl.innerHTML = playerItems.length + ' of ' + PLAYER_MAX
+      + (playerItems.length === 1 ? ' clip loaded' : ' clips loaded')
+      + (atMax ? ' <span class="error-text">— max reached, remove one to add another</span>' : '');
+  }
+  const libAddBtn = document.getElementById('playerLibAddBtn');
+  const filePickBtn = document.getElementById('playerFilePickBtn');
+  if (libAddBtn) libAddBtn.disabled = atMax;
+  if (filePickBtn) filePickBtn.disabled = atMax;
+
   if (!playerItems.length) {
     grid.innerHTML = '<span style="font-family:var(--mono);font-size:11px;color:var(--muted-dim);">'
       + 'Nothing loaded yet — add a clip from the library or from this computer above.</span>';
+    checkPlayerTiming();
     return;
   }
   grid.innerHTML = playerItems.map(it => '<div class="playertile">'
@@ -1856,15 +1870,43 @@ function renderPlayerGrid(){
     + '<div class="meta"><span>' + esc(it.label) + '</span>'
     + '<button class="btn ghost small" data-player-remove="' + it.id + '" style="padding:1px 6px;">remove</button>'
     + '</div></div>').join('');
+  playerVideoEls().forEach(v => v.addEventListener('loadedmetadata', checkPlayerTiming));
+  checkPlayerTiming();
 }
 
 function playerVideoEls(){
   return [...document.querySelectorAll('#playerGrid video')];
 }
 
+// Flags a length mismatch as soon as it is knowable (metadata loaded for at
+// least two clips), not only after Play all is pressed — mismatched clips
+// drift apart on a loop, so the sooner this shows the sooner it can be fixed.
+function checkPlayerTiming(){
+  const st = document.getElementById('playerTimingStatus');
+  if (!st) return;
+  const durs = playerVideoEls()
+    .map(v => v.duration)
+    .filter(d => Number.isFinite(d) && d > 0);
+  if (durs.length < 2) { st.textContent = ''; return; }
+  const spread = Math.max(...durs) - Math.min(...durs);
+  if (spread > 0.15) {
+    st.innerHTML = '<span class="error-text">Clip lengths differ by ' + spread.toFixed(2)
+      + 's — they will drift out of sync on a loop.</span>';
+  } else {
+    st.textContent = '';
+  }
+}
+
 function addPlayerItem(label, url, isLocal){
+  if (playerItems.length >= PLAYER_MAX) {
+    const st = document.getElementById('playerTransportStatus');
+    if (st) st.innerHTML = '<span class="error-text">Player holds at most ' + PLAYER_MAX
+      + ' clips at a time — remove one before adding another.</span>';
+    return false;
+  }
   playerItems.push({ id: ++playerSeq, label, url, isLocal });
   renderPlayerGrid();
+  return true;
 }
 
 function removePlayerItem(id){
@@ -1885,9 +1927,16 @@ function clearPlayerItems(){
 }
 
 function addLocalFilesToPlayer(files){
-  [...files]
-    .filter(f => /^video\//.test(f.type) || /\.(mp4|mov|webm|m4v)$/i.test(f.name))
-    .forEach(f => addPlayerItem(f.name, URL.createObjectURL(f), true));
+  const vids = [...files].filter(f => /^video\//.test(f.type) || /\.(mp4|mov|webm|m4v)$/i.test(f.name));
+  let skipped = 0;
+  vids.forEach(f => {
+    if (!addPlayerItem(f.name, URL.createObjectURL(f), true)) skipped++;
+  });
+  if (skipped > 0) {
+    const st = document.getElementById('playerTransportStatus');
+    if (st) st.innerHTML = '<span class="error-text">Player holds at most ' + PLAYER_MAX
+      + ' clips at a time — ' + skipped + ' file' + (skipped === 1 ? '' : 's') + ' not added.</span>';
+  }
 }
 
 async function refreshPlayerLibraryList(){
@@ -1924,12 +1973,10 @@ async function playAllPlayer(){
         setTimeout(done, 4000);
       })));
   await Promise.all(vids.map(v => v.play().catch(() => {})));
-  const durs = vids.map(v => v.duration || 0);
-  const spread = Math.max(...durs) - Math.min(...durs);
   st.className = 'statusline ok';
   st.textContent = `Playing ${vids.length} clip${vids.length === 1 ? '' : 's'} together`
-    + (loop ? ', looping' : '')
-    + (spread > 0.15 ? ` — note the clips differ in length by ${spread.toFixed(2)}s, so they will drift apart on a loop.` : '.');
+    + (loop ? ', looping.' : '.');
+  checkPlayerTiming();
 }
 
 function pauseAllPlayer(){
