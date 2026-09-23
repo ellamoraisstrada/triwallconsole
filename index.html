@@ -4272,7 +4272,7 @@ async function verifyBuild(){
     ]);
     preferDefault(document.getElementById('imageModelSelect'), imageModels, 'gpt_image_2');
     preferDefault(document.getElementById('videoModelSelect'), videoModels, 'seedance_2_0');
-    preferDefault(document.getElementById('editModelSelect'), editModels, 'flux_kontext');
+    preferDefault(document.getElementById('editModelSelect'), editModels, 'gpt_image_2_5');
   } catch (e) {
     ['imageModelStatus','videoModelStatus'].forEach(id => {
       const el = document.getElementById(id);
