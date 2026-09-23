@@ -5,27 +5,83 @@
 <title>Tri-Wall Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  /* Riso: paper stock, two inks, hard offset shadows.
+     Orange is the action ink. Green means MEASURED AND CORRECT and is used
+     for nothing else, so a green mark on this page always means the same
+     thing. --line, --card and --surface-1 were referenced by the Library and
+     modal rules but never defined anywhere; they are defined here now. */
   :root{
-    --bg:#0A0C10;
-    --surface:#12151B;
-    --surface-2:#181C24;
-    --border:#262B34;
-    --border-soft:#1D2129;
-    --text:#E8ECEF;
-    --muted:#7E8794;
-    --muted-dim:#565D68;
-    --accent:#2FE6C4;
-    --accent-strong:#21C2A3;
-    --accent-wash:rgba(47,230,196,.12);
-    --accent-glow:rgba(47,230,196,.28);
-    --warn:#E8A23D;
-    --warn-wash:rgba(232,162,61,.14);
-    --danger:#E2604B;
-    --danger-wash:rgba(226,96,75,.14);
-    --display:'Big Shoulders Display', 'Arial Narrow', sans-serif;
-    --body:'IBM Plex Sans', system-ui, sans-serif;
-    --mono:'IBM Plex Mono', 'Consolas', monospace;
+    --bg:#F3F0E6;
+    --surface:#FCFBF5;
+    --surface-2:#E9E5D6;
+    --border:#CFC8B4;
+    --border-soft:#E2DCCA;
+    --text:#14130F;
+    --muted:#5C574A;
+    --muted-dim:#8A8272;
+    --accent:#F26419;
+    --accent-strong:#D4500C;
+    --accent-wash:rgba(242,100,25,.12);
+    --accent-glow:rgba(242,100,25,.30);
+    --warn:#B5730A;
+    --warn-wash:rgba(181,115,10,.14);
+    --danger:#C62828;
+    --danger-wash:rgba(198,40,40,.12);
+
+    --ink:#14130F;          /* the heavy outline colour */
+    --shadow:#14130F;       /* the hard offset shadow — separate from --ink,
+                               because in dark mode the outline goes light
+                               while the shadow has to stay dark */
+    --ok:#11845B;           /* green — verified, and nothing else */
+    --ok-wash:rgba(17,132,91,.13);
+    --paper:#FFF9F2;        /* text on top of the orange ink */
+    --riso-off:4px;         /* hard shadow offset */
+    --halftone:rgba(43,76,255,.10);
+    --ui-scale:1.15;        /* everything in this file is hardcoded px, so one
+                               scale is the only way to lift it all together */
+
+    --line:#CFC8B4;         /* was undefined — Library items had no border */
+    --card:#FCFBF5;         /* was undefined — Library items had no background */
+    --surface-1:#FCFBF5;    /* was undefined — modal fell back to a dark panel */
+
+    --display:'Space Grotesk', 'Big Shoulders Display', sans-serif;
+    --body:'Space Grotesk', 'IBM Plex Sans', system-ui, sans-serif;
+    --mono:'JetBrains Mono', 'IBM Plex Mono', 'Consolas', monospace;
+  }
+
+  /* Riso after dark. The stock goes to warm near-black and the ink goes light,
+     but the offset shadow stays darker than the card so it still reads as a
+     shadow rather than a glow. */
+  html[data-theme="dark"]{
+    --bg:#13120E;
+    --surface:#1C1A15;
+    --surface-2:#27241C;
+    --border:#3A3629;
+    --border-soft:#2A2720;
+    --text:#F4EFE3;
+    --muted:#A9A190;
+    --muted-dim:#79725F;
+    --accent:#FF7A2F;
+    --accent-strong:#E0620F;
+    --accent-wash:rgba(255,122,47,.14);
+    --accent-glow:rgba(255,122,47,.34);
+    --warn:#E0A53C;
+    --warn-wash:rgba(224,165,60,.15);
+    --danger:#F0705C;
+    --danger-wash:rgba(240,112,92,.15);
+
+    --ink:#4A4534;          /* outline — light enough to read on the stock */
+    --shadow:#080705;       /* shadow — darker than anything it falls on */
+    --ok:#3DBE7A;
+    --ok-wash:rgba(61,190,122,.15);
+    --paper:#140F08;        /* text on top of the orange ink */
+    --halftone:rgba(120,150,255,.07);
+
+    --line:#3A3629;
+    --card:#1C1A15;
+    --surface-1:#1C1A15;
   }
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);padding:36px 28px 64px;}
@@ -275,6 +331,136 @@
   .pill.failed{color:var(--danger);background:var(--danger-wash);}
 
   .result video{width:100%;display:block;border:1px solid var(--border);margin-top:2px;}
+
+  /* ==========================================================================
+     RISO SKIN
+     Layered on top of the rules above rather than rewritten into them, so the
+     original stylesheet stays readable and this is one reviewable block.
+     Nothing below changes a selector name or an id — only how things look.
+     ========================================================================== */
+
+  /* Paper stock with a coarse halftone. Painted as a background-image rather
+     than an overlay element: an overlay would need a z-index and could land on
+     top of the modal, which sits at 9000. */
+  body{
+    background-color:var(--bg);
+    background-image:radial-gradient(var(--halftone) 1px, transparent 1px);
+    background-size:4px 4px;
+    zoom:var(--ui-scale);
+  }
+
+  /* Space Grotesk is wider than Big Shoulders, so the display sizes need to
+     come back down and the tracking needs to tighten. */
+  .masthead h1{font-weight:700;letter-spacing:-.03em;text-transform:none;font-size:38px;}
+  .card h2,.section-head h2,.conn .name,.wallcard-head .name,.modal h3{
+    letter-spacing:-.01em;text-transform:none;}
+  .tabbtn{letter-spacing:.02em;text-transform:none;font-size:14px;}
+
+  /* Elevation is a hard offset shadow — the Riso register error, made useful. */
+  .card,.wallcard,.rigbar,.statbox,.libitem,.metrics,.modal{
+    border:1.5px solid var(--ink);
+    box-shadow:var(--riso-off) var(--riso-off) 0 var(--shadow);
+  }
+  .wallcard.center{border-color:var(--ink);box-shadow:var(--riso-off) var(--riso-off) 0 var(--accent);}
+  .modal{box-shadow:8px 8px 0 var(--accent);}
+  .modal-back{background:rgba(20,19,15,.55);}
+
+  /* Buttons: the original put near-black text on the accent, which is
+     unreadable on orange. */
+  .btn{
+    border:1.5px solid var(--ink);color:var(--paper);
+    box-shadow:2px 2px 0 var(--shadow);
+    transition:transform .12s, box-shadow .12s, filter .15s;
+  }
+  .btn:hover:not(:disabled){filter:brightness(1.04);transform:translate(1px,1px);box-shadow:1px 1px 0 var(--shadow);}
+  .btn.ghost{background:var(--surface);color:var(--text);border-color:var(--ink);}
+  .btn.ghost:hover:not(:disabled){color:var(--accent-strong);border-color:var(--ink);box-shadow:1px 1px 0 var(--shadow);}
+  .btn:disabled{box-shadow:none;transform:none;}
+  .stepno{color:var(--paper);}
+
+  /* Inputs sit sunk into the stock. */
+  input[type=text],input[type=number],select,textarea{border:1.5px solid var(--ink);border-radius:0;}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:2px 2px 0 var(--accent);}
+  .dropzone{border:1.5px dashed var(--ink);}
+  .dropzone:hover{border-color:var(--accent);}
+
+  /* Media keeps a neutral backing rather than the old near-black. */
+  .wallcard .dropzone img,.wallcard .dropzone video{background:var(--surface-2);}
+
+  /* GREEN MEANS MEASURED AND CORRECT.
+     These states all read from --accent before, which now means "action".
+     Reserving green for verified keeps one colour with one meaning. */
+  .conn .dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--ok-wash);}
+  .callout-ok{color:var(--ok);background:var(--ok-wash);border-left-color:var(--ok);}
+  .pill.completed{color:var(--ok);background:var(--ok-wash);}
+  .metrics dd.good{color:var(--ok);}
+  .statusline.ok{color:var(--ok);}
+  .ratebtn.on{background:var(--ok-wash);border-color:var(--ok);color:var(--ok);}
+  .rate-btn.on-up{border-color:var(--ok);color:var(--ok);background:var(--ok-wash);}
+  .rate-btn.on-down{border-color:var(--danger);color:var(--danger);background:var(--danger-wash);}
+
+  /* Fill the screen. The 1360px cap left most of a studio monitor empty, and
+     the three wall cards are the widest thing here. */
+  body{padding:30px 4vw 70px;}
+  .wrap{max-width:none;}
+
+  /* A hard offset shadow sits OUTSIDE the border box and does not affect
+     layout, so anything immediately following a shadowed card gets overlapped
+     by it — which is what happened to the Self-calibration heading under the
+     knowledge card. `.tabpanel > .section-head:first-child{margin-top:0}` has
+     always been in this file, implying a top margin that was never declared. */
+  .section-head{margin-top:calc(var(--riso-off) + 30px);}
+
+  /* Connections: required on one line, optional on the next.
+     The rows are generated flat, so the grouping comes from the is-required /
+     is-optional hook on each row. The :not() picks the FIRST optional row —
+     the only one with no optional sibling before it — and forces it back to
+     column 1, which starts a new line without needing a wrapper element. */
+  /* The wrapper keeps its id and its collapse behaviour — it just stops
+     drawing a box around everything, so each check reads as its own card on
+     the stock rather than rows inside one panel. */
+  #connCard{background:none;border:none;box-shadow:none;padding:0;}
+  /* stretch so cards on the same line share a height; the row spacing comes
+     from the cards' own top margin, which also makes room for the group
+     label — putting it in the grid gap would space the banner out too. */
+  #connList{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));
+    gap:16px;align-items:stretch;}
+  #connList > :not(.conn){grid-column:1/-1;}
+
+  .conn{position:relative;display:grid;grid-template-columns:1fr auto;
+    grid-template-rows:auto 1fr;margin-top:30px;
+    gap:10px 14px;align-items:start;padding:15px 16px;
+    border:1.5px solid var(--ink);background:var(--surface);
+    box-shadow:var(--riso-off) var(--riso-off) 0 var(--shadow);}
+  .conn:last-of-type{border-bottom:1.5px solid var(--ink);}
+  .conn > div:not(.acts){grid-column:1;grid-row:1;min-width:0;}
+  .conn .acts{grid-column:1/-1;grid-row:2;flex-direction:row;align-items:center;}
+  .conn .name{font-size:16px;}
+  /* the group label above already says which it is */
+  .conn .name .req{display:none;}
+
+  /* REQUIRED / OPTIONAL headings. There is no element to hang them on — the
+     rows are generated flat — so each is drawn above the FIRST card of its
+     group: the only one with no earlier sibling from the same group. */
+  .conn.is-optional:not(.is-optional ~ .is-optional){grid-column-start:1;}
+  .conn.is-required:not(.is-required ~ .is-required)::before{content:'Required';}
+  .conn.is-optional:not(.is-optional ~ .is-optional)::before{content:'Optional';}
+  .conn.is-required:not(.is-required ~ .is-required)::before,
+  .conn.is-optional:not(.is-optional ~ .is-optional)::before{
+    position:absolute;top:-27px;left:0;white-space:nowrap;font-family:var(--mono);
+    font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted-dim);}
+
+  /* The status dot becomes a bordered chip in the top-right of its card. */
+  .conn .dot{grid-column:2;grid-row:1;align-self:start;
+    width:auto;height:auto;margin:0;border-radius:0;background:none;box-shadow:none;
+    border:1.5px solid currentColor;padding:3px 9px;
+    font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;}
+  .conn .dot.ok{color:var(--ok);background:none;box-shadow:none;}
+  .conn .dot.bad{color:var(--danger);background:none;box-shadow:none;}
+  .conn .dot.opt{color:var(--warn);background:none;box-shadow:none;}
+  .conn .dot.ok::after{content:'Ready';}
+  .conn .dot.bad::after{content:'Missing';}
+  .conn .dot.opt::after{content:'Missing';}
 </style>
 </head>
 <body>
@@ -290,6 +476,7 @@
     <div style="text-align:right;">
       <div class="rig-diagram" style="justify-content:flex-end;"><div class="seg"></div><div class="seg center"></div><div class="seg"></div></div>
       <div class="rig-label">L · C · R</div>
+      <button class="btn ghost small" id="themeToggle" style="margin-top:14px;" title="Switch between the light and dark stock. Remembered on this machine.">Dark</button>
       <button class="btn ghost small" id="resetBtn" style="margin-top:14px;">Reset — new scene</button>
       <!-- Which code is on screen. Substituted by the server at serve time;
            if these placeholders are ever visible, something is serving
@@ -507,10 +694,10 @@
    Selectors are deliberately over-qualified: `.btn.ghost` is (0,2,0) and its
    hover rule is (0,4,0), so a plain `.librateb` rule loses to both and a
    hovered red arrow would turn teal. These sit above them. */
-.btn.ghost.librateb { color:var(--muted-dim); border-color:var(--line); background:transparent; }
+.btn.ghost.librateb { color:var(--muted-dim); border-color:var(--ink); background:transparent; box-shadow:none; }
 .btn.ghost.librateb.on[data-rating="up"],
 .btn.ghost.librateb.on[data-rating="up"]:hover:not(:disabled) {
-  color:#3FD97A; border-color:#3FD97A; background:rgba(63,217,122,.14); }
+  color:var(--ok); border-color:var(--ok); background:var(--ok-wash); }
 .btn.ghost.librateb.on[data-rating="down"],
 .btn.ghost.librateb.on[data-rating="down"]:hover:not(:disabled) {
   color:var(--danger); border-color:var(--danger); background:var(--danger-wash); }
@@ -2590,7 +2777,7 @@ function renderPreflight(d){
       : '';
     const session = c.session
       ? `<div class="detail">Session valid for ${c.session.hoursLeft}h (expires ${new Date(c.session.expiresAt).toLocaleString()}).</div>` : '';
-    return `<div class="conn">
+    return `<div class="conn ${c.required ? 'is-required' : 'is-optional'}">
       <span class="dot ${cls}"></span>
       <div>
         <div class="name">${c.label}<span class="req">${c.required ? 'required' : 'optional'}</span></div>
@@ -4315,6 +4502,27 @@ async function verifyBuild(){
   // that state, models and rig rules have all settled, so the panel reflects
   // the real thing rather than a mid-load guess.
   try { await refreshPresetDebug(); } catch (e) {}
+})();
+</script>
+<script>
+// Light / dark stock. Kept in its own block so the main script above stays
+// untouched by the restyle. Nothing else reads this — it only sets an
+// attribute on <html>, which the stylesheet keys off.
+(function () {
+  const root = document.documentElement;
+  const btn = document.getElementById('themeToggle');
+  let saved = null;
+  try { saved = localStorage.getItem('triwall_theme'); } catch (e) {}
+  function apply(mode) {
+    if (mode === 'dark') root.setAttribute('data-theme', 'dark');
+    else root.removeAttribute('data-theme');
+    if (btn) btn.textContent = (mode === 'dark') ? 'Light' : 'Dark';
+    try { localStorage.setItem('triwall_theme', mode); } catch (e) {}
+  }
+  apply(saved === 'dark' ? 'dark' : 'light');
+  if (btn) btn.addEventListener('click', () => {
+    apply(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
 })();
 </script>
 </body>
