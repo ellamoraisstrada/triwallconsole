@@ -5,27 +5,83 @@
 <title>Tri-Wall Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  /* Riso: paper stock, two inks, hard offset shadows.
+     Orange is the action ink. Green means MEASURED AND CORRECT and is used
+     for nothing else, so a green mark on this page always means the same
+     thing. --line, --card and --surface-1 were referenced by the Library and
+     modal rules but never defined anywhere; they are defined here now. */
   :root{
-    --bg:#0A0C10;
-    --surface:#12151B;
-    --surface-2:#181C24;
-    --border:#262B34;
-    --border-soft:#1D2129;
-    --text:#E8ECEF;
-    --muted:#7E8794;
-    --muted-dim:#565D68;
-    --accent:#2FE6C4;
-    --accent-strong:#21C2A3;
-    --accent-wash:rgba(47,230,196,.12);
-    --accent-glow:rgba(47,230,196,.28);
-    --warn:#E8A23D;
-    --warn-wash:rgba(232,162,61,.14);
-    --danger:#E2604B;
-    --danger-wash:rgba(226,96,75,.14);
-    --display:'Big Shoulders Display', 'Arial Narrow', sans-serif;
-    --body:'IBM Plex Sans', system-ui, sans-serif;
-    --mono:'IBM Plex Mono', 'Consolas', monospace;
+    --bg:#F3F0E6;
+    --surface:#FCFBF5;
+    --surface-2:#E9E5D6;
+    --border:#CFC8B4;
+    --border-soft:#E2DCCA;
+    --text:#14130F;
+    --muted:#5C574A;
+    --muted-dim:#8A8272;
+    --accent:#F26419;
+    --accent-strong:#D4500C;
+    --accent-wash:rgba(242,100,25,.12);
+    --accent-glow:rgba(242,100,25,.30);
+    --warn:#B5730A;
+    --warn-wash:rgba(181,115,10,.14);
+    --danger:#C62828;
+    --danger-wash:rgba(198,40,40,.12);
+
+    --ink:#14130F;          /* the heavy outline colour */
+    --shadow:#14130F;       /* the hard offset shadow — separate from --ink,
+                               because in dark mode the outline goes light
+                               while the shadow has to stay dark */
+    --ok:#11845B;           /* green — verified, and nothing else */
+    --ok-wash:rgba(17,132,91,.13);
+    --paper:#FFF9F2;        /* text on top of the orange ink */
+    --riso-off:4px;         /* hard shadow offset */
+    --halftone:rgba(43,76,255,.10);
+    --ui-scale:1.15;        /* everything in this file is hardcoded px, so one
+                               scale is the only way to lift it all together */
+
+    --line:#CFC8B4;         /* was undefined — Library items had no border */
+    --card:#FCFBF5;         /* was undefined — Library items had no background */
+    --surface-1:#FCFBF5;    /* was undefined — modal fell back to a dark panel */
+
+    --display:'Space Grotesk', 'Big Shoulders Display', sans-serif;
+    --body:'Space Grotesk', 'IBM Plex Sans', system-ui, sans-serif;
+    --mono:'JetBrains Mono', 'IBM Plex Mono', 'Consolas', monospace;
+  }
+
+  /* Riso after dark. The stock goes to warm near-black and the ink goes light,
+     but the offset shadow stays darker than the card so it still reads as a
+     shadow rather than a glow. */
+  html[data-theme="dark"]{
+    --bg:#13120E;
+    --surface:#1C1A15;
+    --surface-2:#27241C;
+    --border:#3A3629;
+    --border-soft:#2A2720;
+    --text:#F4EFE3;
+    --muted:#A9A190;
+    --muted-dim:#79725F;
+    --accent:#FF7A2F;
+    --accent-strong:#E0620F;
+    --accent-wash:rgba(255,122,47,.14);
+    --accent-glow:rgba(255,122,47,.34);
+    --warn:#E0A53C;
+    --warn-wash:rgba(224,165,60,.15);
+    --danger:#F0705C;
+    --danger-wash:rgba(240,112,92,.15);
+
+    --ink:#4A4534;          /* outline — light enough to read on the stock */
+    --shadow:#080705;       /* shadow — darker than anything it falls on */
+    --ok:#3DBE7A;
+    --ok-wash:rgba(61,190,122,.15);
+    --paper:#140F08;        /* text on top of the orange ink */
+    --halftone:rgba(120,150,255,.07);
+
+    --line:#3A3629;
+    --card:#1C1A15;
+    --surface-1:#1C1A15;
   }
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);padding:36px 28px 64px;}
@@ -235,6 +291,11 @@
   .dropzone:hover{border-color:var(--accent);}
   .dropzone.drag{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-wash) inset;}
   .dropzone .dz-content{display:contents;}
+  .dropzone img.dz-inherited{opacity:.45;}
+  .dropzone .dz-inherit-tag.pending{background:var(--warn);color:var(--paper);}
+  .dropzone .dz-inherit-tag{position:absolute;left:0;right:0;bottom:0;padding:4px 8px;
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--paper);background:var(--muted);text-align:center;}
   .dropzone img{width:100%;height:100%;object-fit:cover;display:block;}
   .dropzone span{padding:0 14px;}
   input[type=file]{display:none;}
@@ -275,6 +336,136 @@
   .pill.failed{color:var(--danger);background:var(--danger-wash);}
 
   .result video{width:100%;display:block;border:1px solid var(--border);margin-top:2px;}
+
+  /* ==========================================================================
+     RISO SKIN
+     Layered on top of the rules above rather than rewritten into them, so the
+     original stylesheet stays readable and this is one reviewable block.
+     Nothing below changes a selector name or an id — only how things look.
+     ========================================================================== */
+
+  /* Paper stock with a coarse halftone. Painted as a background-image rather
+     than an overlay element: an overlay would need a z-index and could land on
+     top of the modal, which sits at 9000. */
+  body{
+    background-color:var(--bg);
+    background-image:radial-gradient(var(--halftone) 1px, transparent 1px);
+    background-size:4px 4px;
+    zoom:var(--ui-scale);
+  }
+
+  /* Space Grotesk is wider than Big Shoulders, so the display sizes need to
+     come back down and the tracking needs to tighten. */
+  .masthead h1{font-weight:700;letter-spacing:-.03em;text-transform:none;font-size:38px;}
+  .card h2,.section-head h2,.conn .name,.wallcard-head .name,.modal h3{
+    letter-spacing:-.01em;text-transform:none;}
+  .tabbtn{letter-spacing:.02em;text-transform:none;font-size:14px;}
+
+  /* Elevation is a hard offset shadow — the Riso register error, made useful. */
+  .card,.wallcard,.rigbar,.statbox,.libitem,.metrics,.modal{
+    border:1.5px solid var(--ink);
+    box-shadow:var(--riso-off) var(--riso-off) 0 var(--shadow);
+  }
+  .wallcard.center{border-color:var(--ink);box-shadow:var(--riso-off) var(--riso-off) 0 var(--accent);}
+  .modal{box-shadow:8px 8px 0 var(--accent);}
+  .modal-back{background:rgba(20,19,15,.55);}
+
+  /* Buttons: the original put near-black text on the accent, which is
+     unreadable on orange. */
+  .btn{
+    border:1.5px solid var(--ink);color:var(--paper);
+    box-shadow:2px 2px 0 var(--shadow);
+    transition:transform .12s, box-shadow .12s, filter .15s;
+  }
+  .btn:hover:not(:disabled){filter:brightness(1.04);transform:translate(1px,1px);box-shadow:1px 1px 0 var(--shadow);}
+  .btn.ghost{background:var(--surface);color:var(--text);border-color:var(--ink);}
+  .btn.ghost:hover:not(:disabled){color:var(--accent-strong);border-color:var(--ink);box-shadow:1px 1px 0 var(--shadow);}
+  .btn:disabled{box-shadow:none;transform:none;}
+  .stepno{color:var(--paper);}
+
+  /* Inputs sit sunk into the stock. */
+  input[type=text],input[type=number],select,textarea{border:1.5px solid var(--ink);border-radius:0;}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:2px 2px 0 var(--accent);}
+  .dropzone{border:1.5px dashed var(--ink);}
+  .dropzone:hover{border-color:var(--accent);}
+
+  /* Media keeps a neutral backing rather than the old near-black. */
+  .wallcard .dropzone img,.wallcard .dropzone video{background:var(--surface-2);}
+
+  /* GREEN MEANS MEASURED AND CORRECT.
+     These states all read from --accent before, which now means "action".
+     Reserving green for verified keeps one colour with one meaning. */
+  .conn .dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--ok-wash);}
+  .callout-ok{color:var(--ok);background:var(--ok-wash);border-left-color:var(--ok);}
+  .pill.completed{color:var(--ok);background:var(--ok-wash);}
+  .metrics dd.good{color:var(--ok);}
+  .statusline.ok{color:var(--ok);}
+  .ratebtn.on{background:var(--ok-wash);border-color:var(--ok);color:var(--ok);}
+  .rate-btn.on-up{border-color:var(--ok);color:var(--ok);background:var(--ok-wash);}
+  .rate-btn.on-down{border-color:var(--danger);color:var(--danger);background:var(--danger-wash);}
+
+  /* Fill the screen. The 1360px cap left most of a studio monitor empty, and
+     the three wall cards are the widest thing here. */
+  body{padding:30px 4vw 70px;}
+  .wrap{max-width:none;}
+
+  /* A hard offset shadow sits OUTSIDE the border box and does not affect
+     layout, so anything immediately following a shadowed card gets overlapped
+     by it — which is what happened to the Self-calibration heading under the
+     knowledge card. `.tabpanel > .section-head:first-child{margin-top:0}` has
+     always been in this file, implying a top margin that was never declared. */
+  .section-head{margin-top:calc(var(--riso-off) + 30px);}
+
+  /* Connections: required on one line, optional on the next.
+     The rows are generated flat, so the grouping comes from the is-required /
+     is-optional hook on each row. The :not() picks the FIRST optional row —
+     the only one with no optional sibling before it — and forces it back to
+     column 1, which starts a new line without needing a wrapper element. */
+  /* The wrapper keeps its id and its collapse behaviour — it just stops
+     drawing a box around everything, so each check reads as its own card on
+     the stock rather than rows inside one panel. */
+  #connCard{background:none;border:none;box-shadow:none;padding:0;}
+  /* stretch so cards on the same line share a height; the row spacing comes
+     from the cards' own top margin, which also makes room for the group
+     label — putting it in the grid gap would space the banner out too. */
+  #connList{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));
+    gap:16px;align-items:stretch;}
+  #connList > :not(.conn){grid-column:1/-1;}
+
+  .conn{position:relative;display:grid;grid-template-columns:1fr auto;
+    grid-template-rows:auto 1fr;margin-top:30px;
+    gap:10px 14px;align-items:start;padding:15px 16px;
+    border:1.5px solid var(--ink);background:var(--surface);
+    box-shadow:var(--riso-off) var(--riso-off) 0 var(--shadow);}
+  .conn:last-of-type{border-bottom:1.5px solid var(--ink);}
+  .conn > div:not(.acts){grid-column:1;grid-row:1;min-width:0;}
+  .conn .acts{grid-column:1/-1;grid-row:2;flex-direction:row;align-items:center;}
+  .conn .name{font-size:16px;}
+  /* the group label above already says which it is */
+  .conn .name .req{display:none;}
+
+  /* REQUIRED / OPTIONAL headings. There is no element to hang them on — the
+     rows are generated flat — so each is drawn above the FIRST card of its
+     group: the only one with no earlier sibling from the same group. */
+  .conn.is-optional:not(.is-optional ~ .is-optional){grid-column-start:1;}
+  .conn.is-required:not(.is-required ~ .is-required)::before{content:'Required';}
+  .conn.is-optional:not(.is-optional ~ .is-optional)::before{content:'Optional';}
+  .conn.is-required:not(.is-required ~ .is-required)::before,
+  .conn.is-optional:not(.is-optional ~ .is-optional)::before{
+    position:absolute;top:-27px;left:0;white-space:nowrap;font-family:var(--mono);
+    font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted-dim);}
+
+  /* The status dot becomes a bordered chip in the top-right of its card. */
+  .conn .dot{grid-column:2;grid-row:1;align-self:start;
+    width:auto;height:auto;margin:0;border-radius:0;background:none;box-shadow:none;
+    border:1.5px solid currentColor;padding:3px 9px;
+    font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;}
+  .conn .dot.ok{color:var(--ok);background:none;box-shadow:none;}
+  .conn .dot.bad{color:var(--danger);background:none;box-shadow:none;}
+  .conn .dot.opt{color:var(--warn);background:none;box-shadow:none;}
+  .conn .dot.ok::after{content:'Ready';}
+  .conn .dot.bad::after{content:'Missing';}
+  .conn .dot.opt::after{content:'Missing';}
 </style>
 </head>
 <body>
@@ -284,12 +475,12 @@
     <div>
       <img src="/assets/strada-logo.svg" alt="StradaXR" class="brandmark">
       <h1>Tri-Wall Console</h1>
-      <div class="tagline">One camera rig, three synchronized views. State what the physical camera does once — the locked rules for all three walls are derived from it, coupled and mirror-symmetric, so a push-in reads as one continuous move across the whole wall instead of three walls each pushing in separately.</div>
-      <div class="chatlink">Scene &amp; prompts sync from the <code>/tri-wall</code> conversation — click "Sync from chat" after asking Claude to draft.</div>
+      <div class="tagline">One camera rig, three synchronized views.<button class="whybtn" type="button" data-why="about" title="What that means, and how the scene syncs from the /tri-wall chat. Opens the console.">what this is</button></div>
     </div>
     <div style="text-align:right;">
       <div class="rig-diagram" style="justify-content:flex-end;"><div class="seg"></div><div class="seg center"></div><div class="seg"></div></div>
       <div class="rig-label">L · C · R</div>
+      <button class="btn ghost small" id="themeToggle" style="margin-top:14px;" title="Switch between the light and dark stock. Remembered on this machine.">Dark</button>
       <button class="btn ghost small" id="resetBtn" style="margin-top:14px;">Reset — new scene</button>
       <!-- Which code is on screen. Substituted by the server at serve time;
            if these placeholders are ever visible, something is serving
@@ -304,10 +495,9 @@
   </div>
   <div class="card" id="connCard" style="margin-bottom:26px;">
     <div id="connList"></div>
-    <p style="margin:6px 0 0;font-family:var(--mono);font-size:10.5px;color:var(--muted-dim);line-height:1.6;">
-      Sign-in is handled entirely by each vendor's own CLI in its own browser flow. This tool never asks for,
-      stores or transmits a password, API key or token — there is no field here that takes one. Your session
-      lives in your own home directory and your credits are billed to your own account.
+    <p style="margin:6px 0 0;">
+      <button class="whybtn" type="button" data-why="signin" style="margin-left:0;"
+        title="How sign-in works and what this tool never stores. Opens the console.">how sign-in works</button>
     </p>
   </div>
 
@@ -387,7 +577,7 @@
       </label>
       <button class="btn small" id="draftVideoPromptsBtn" title="Have Claude write each wall's ambient-motion description by looking at that wall's own reference image — doesn't generate video, just drafts text for you to review">Draft in-scene motion — all 3 walls</button>
     </div>
-  <div id="decodeSection">
+  <div id="decodeSection" style="display:none;">
   <div class="section-head">
     <h2><span class="stepno">3A</span>Decoder <span class="sub">measure the centre clip, match it to a rig move, write it into the side rules</span></h2>
   </div>
@@ -443,10 +633,10 @@
   </div><!-- /decodeSection -->
   </div>
   <div class="modepick" id="videoSourceMode">
-    <button class="modebtn active" data-vmode="decoded">
+    <button class="modebtn" data-vmode="decoded">
       <b>A · Decode a client clip</b><span>Upload the centre wall video. It is measured, matched against our C_ reference renders, and Apply writes that move into all three walls.</span>
     </button>
-    <button class="modebtn" data-vmode="text">
+    <button class="modebtn active" data-vmode="text">
       <b>B · Pick a preset camera path</b><span>No clip. Choose one of the C_ rig moves measured from our own nDisplay renders, and Apply writes it into all three walls.</span>
     </button>
   </div>
@@ -485,6 +675,81 @@
 <style>
 .buildstamp{font-family:var(--mono);font-size:9.5px;line-height:1.5;color:var(--muted-dim);margin-top:10px;text-align:right;}
 .buildstamp.stale{color:var(--accent);}
+/* THE CONSOLE. This page explained itself in permanent paragraphs beside
+   every control - accurate, but it meant the operator read the same three
+   paragraphs every day to reach a number. The prose moves here: one drawer,
+   always reachable, never in the way. Nothing is deleted; anything that used
+   to be printed inline is logged here instead, keyed so a re-render updates
+   its entry rather than stacking duplicates. */
+.uiconsole{position:fixed;right:0;bottom:0;z-index:70;width:min(720px,96vw);
+  font-family:var(--mono);}
+.uiconsole-tab{display:flex;align-items:center;gap:8px;margin-left:auto;
+  border:1.5px solid var(--ink);border-bottom:none;background:var(--surface);
+  color:var(--text);font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;padding:7px 14px;cursor:pointer;
+  box-shadow:calc(-1 * var(--riso-off)) calc(-1 * var(--riso-off)) 0 var(--shadow);}
+.uiconsole-tab:hover{border-color:var(--accent);color:var(--accent);}
+.uiconsole-count{border:1px solid currentColor;padding:0 5px;font-size:10px;opacity:.75;}
+.uiconsole-body{border:1.5px solid var(--ink);background:var(--surface);
+  max-height:46vh;display:flex;flex-direction:column;
+  box-shadow:calc(-1 * var(--riso-off)) calc(-1 * var(--riso-off)) 0 var(--shadow);}
+.uiconsole.collapsed .uiconsole-body{display:none;}
+.uiconsole-head{display:flex;align-items:center;gap:10px;padding:8px 12px;
+  border-bottom:1px solid var(--border);flex-wrap:wrap;}
+.uiconsole-head strong{font-family:var(--display);font-size:14px;}
+.uiconsole-head .sub{font-size:10px;color:var(--muted-dim);flex:1;text-transform:none;letter-spacing:0;}
+.uiconsole-list{overflow-y:auto;padding:4px 0;}
+.uic-entry{padding:8px 12px;border-bottom:1px solid var(--border-soft);}
+.uic-entry:last-child{border-bottom:none;}
+.uic-meta{display:flex;justify-content:space-between;gap:10px;font-size:9.5px;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--muted-dim);margin-bottom:4px;}
+.uic-src{color:var(--accent);}
+.uic-body{font-size:11px;line-height:1.6;color:var(--muted);}
+.uic-body strong{color:var(--text);font-weight:500;}
+.uic-body table.rsr{margin-top:6px;width:100%;}
+.uic-body table.rsr tbody,
+.uic-body table.rsr tr,
+.uic-body table.rsr td{display:block;}
+.uic-body table.rsr tr{margin-bottom:7px;padding-left:8px;border-left:2px solid var(--border);}
+.uic-body table.rsr td{padding:0;}
+.uic-body table.rsr .rsr-a{display:none;}
+.uic-body table.rsr .rsr-n{white-space:normal;margin-top:2px;}
+.uiconsole-empty{padding:14px 12px;font-size:11px;color:var(--muted-dim);}
+/* The little round "explain this" button that replaces a paragraph. */
+.whybtn{border:1px solid var(--border);background:none;color:var(--muted);
+  font-family:var(--mono);font-size:10px;line-height:1;padding:3px 7px;cursor:pointer;
+  letter-spacing:.06em;text-transform:uppercase;margin-left:8px;vertical-align:middle;}
+.whybtn:hover{border-color:var(--accent);color:var(--accent);}
+.modehint:empty { display:none; }
+.vsp { margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px; }
+.vsp-head { font-family:var(--mono); font-size:10.5px; color:var(--muted); margin-bottom:8px; }
+.vsp-head strong { color:var(--accent); font-weight:400; }
+.vsp-warn { color:var(--warn); }
+.vsp-row { display:grid; grid-template-columns:1fr 1.2fr 1fr; gap:8px; align-items:start;
+  max-width:620px; }
+.vsp-cell { min-width:0; }
+.vsp-label { font-family:var(--mono); font-size:9.5px; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--muted-dim); margin-bottom:4px; }
+.vsp-cell img { width:100%; display:block; aspect-ratio:16/9; object-fit:cover;
+  border:1.5px solid var(--ink); background:var(--surface-2); }
+.vsp-gap { aspect-ratio:16/9; border:1.5px dashed var(--border); display:flex; align-items:center;
+  justify-content:center; text-align:center; padding:0 8px; font-family:var(--mono);
+  font-size:10px; color:var(--muted-dim); }
+.setgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+.setitem { border:1.5px solid var(--ink); background:var(--surface);
+  box-shadow:var(--riso-off) var(--riso-off) 0 var(--shadow); padding:10px; }
+.setitem.live { border-color:var(--accent); box-shadow:var(--riso-off) var(--riso-off) 0 var(--accent-glow); }
+.setthumbs { display:grid; grid-template-columns:1fr 1.2fr 1fr; gap:3px; background:var(--border-soft); }
+.setthumbs img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:var(--surface-2); }
+.setthumbs .setempty { display:flex; align-items:center; justify-content:center; aspect-ratio:16/9;
+  background:var(--surface-2); color:var(--muted-dim); font-family:var(--mono); font-size:13px; }
+.setmeta { padding-top:9px; }
+.setname { width:100%; background:none; border:none; border-bottom:1px solid var(--border);
+  color:var(--text); font-family:var(--display); font-size:15px; font-weight:600; padding:2px 0; }
+.setname:focus { outline:none; border-bottom-color:var(--accent); }
+.setsub { font-family:var(--mono); font-size:10px; color:var(--muted); margin-top:5px; line-height:1.5; }
+.setsub strong { color:var(--accent); font-weight:400; }
+.setacts { display:flex; gap:6px; margin-top:9px; }
 .libgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
 .libitem { border:1px solid var(--line); border-radius:6px; overflow:hidden; background:var(--card); }
 .libitem video, .libitem img { width:100%; display:block; background:#000; aspect-ratio:16/9; object-fit:contain; }
@@ -507,10 +772,10 @@
    Selectors are deliberately over-qualified: `.btn.ghost` is (0,2,0) and its
    hover rule is (0,4,0), so a plain `.librateb` rule loses to both and a
    hovered red arrow would turn teal. These sit above them. */
-.btn.ghost.librateb { color:var(--muted-dim); border-color:var(--line); background:transparent; }
+.btn.ghost.librateb { color:var(--muted-dim); border-color:var(--ink); background:transparent; box-shadow:none; }
 .btn.ghost.librateb.on[data-rating="up"],
 .btn.ghost.librateb.on[data-rating="up"]:hover:not(:disabled) {
-  color:#3FD97A; border-color:#3FD97A; background:rgba(63,217,122,.14); }
+  color:var(--ok); border-color:var(--ok); background:var(--ok-wash); }
 .btn.ghost.librateb.on[data-rating="down"],
 .btn.ghost.librateb.on[data-rating="down"]:hover:not(:disabled) {
   color:var(--danger); border-color:var(--danger); background:var(--danger-wash); }
@@ -524,6 +789,8 @@ table.rsr .rsr-a { color: var(--muted-dim); }
 table.rsr .rsr-p { color: var(--text); }
 table.rsr .rsr-n { color: var(--muted-dim); white-space: nowrap; }
 .rsr-warn { color: var(--accent); font-family: var(--mono); font-size: 10.5px; margin-top: 5px; }
+.rsr-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.rsr-detail { margin-top: 8px; }
 .rsr-inline { font-family: var(--mono); font-size: 10.5px; color: var(--muted); margin: 4px 0 0; }
 .rsr-inline span { color: var(--muted-dim); }
 </style>
@@ -827,6 +1094,7 @@ async function refreshFromState(){
     updateGenerateEnabled(w.id);
     restoreGenState('img', w.id, st.genImageStatus, st.genImageUrl);
   });
+  refreshApproveWaiting();
   WALLS.forEach(w => {
     const st = state.walls[w.id];
     const rp = document.getElementById(`refineprompt-${w.id}`);
@@ -906,6 +1174,25 @@ function renderDropzone(kind, id){
   let src;
   if (kind === 'img') {
     src = wallImageSrc(id);
+    // INHERITED CENTRE SOURCE. Every img generation on a side wall already
+    // sends the CENTRE's picture as its reference - referenceImagePathFor()
+    // returns wallReferencePath('center') for kind 'img' regardless of which
+    // wall is being generated - so the moment a source lands on the centre it
+    // is the source for all three. The two side cards just never showed it,
+    // which made them read as empty and unready when they were neither, and
+    // invited dropping a second copy of the same file onto each one.
+    // Shown dimmed and labelled: it is the centre's picture, not this wall's
+    // own result, and the remove button stays off because there is nothing
+    // here belonging to this wall to remove.
+    if (!src && id !== 'center') {
+      const inherited = wallImageSrc('center');
+      if (inherited) {
+        el.innerHTML = `<img src="${inherited}" class="dz-inherited">`
+          + `<span class="dz-inherit-tag">source from centre</span>`;
+        removeBtn.style.display = 'none';
+        return;
+      }
+    }
     el.innerHTML = src ? `<img src="${src}">` : `<span>Drop an image, or generate one below</span>`;
   } else {
     // 'vid' and 'ref' show the same underlying image (this wall's approved
@@ -914,7 +1201,22 @@ function renderDropzone(kind, id){
     const st = state.walls[id];
     const path = wallReferencePath(id);
     src = st.genImageUrl && st.approvedImagePath ? st.genImageUrl : (path ? `/uploads/${path.split(/[\\/]/).pop()}` : null);
-    const placeholder = kind === 'ref' ? 'Drop the center reference image here' : 'Approve a reference image above, or drop one here';
+    // WAITING ON APPROVAL. Video reads approvedImagePath || uploadedImagePath,
+    // so a generated image that has not been approved is invisible here - and
+    // the card said only "Approve a reference image above". That text is from
+    // when this page was one long scroll; Image and Video are separate tabs
+    // now, so "above" points at a different tab and the picture looked simply
+    // missing. Show it, say what it is waiting for, and put the button that
+    // clears it on this tab (see the Source set card's Approve action).
+    if (!src && kind === 'vid' && st.genImageUrl) {
+      el.innerHTML = `<img src="${st.genImageUrl}" class="dz-inherited">`
+        + `<span class="dz-inherit-tag pending">generated &mdash; not approved yet</span>`;
+      removeBtn.style.display = 'none';
+      return;
+    }
+    const placeholder = kind === 'ref'
+      ? 'Drop the center reference image here'
+      : 'No image for this wall yet. Generate one on the Image tab and approve it, or drop one here.';
     el.innerHTML = src ? `<img src="${src}">` : `<span>${placeholder}</span>`;
   }
   removeBtn.style.display = src ? 'flex' : 'none';
@@ -927,6 +1229,13 @@ function refreshWallImageDisplays(id){
   renderDropzone('vid', id);
   renderDropzone('ref', id);
   refreshRefinePreview(id);
+  // The centre's picture is also what the two side image cards display as
+  // their inherited source (see renderDropzone), so changing the centre has
+  // to repaint them - otherwise the new source appears on the centre card
+  // and the sides keep showing the old one until a full reload.
+  if (id === 'center') {
+    ['left', 'right'].forEach(w => renderDropzone('img', w));
+  }
 }
 
 // Read-only preview on the Refine card — same underlying image as the img
@@ -1555,6 +1864,17 @@ function setPill(kind, id, status){
   pill.textContent = status;
 }
 
+// WHICH SHAPE A WALL IS GENERATED AT.
+//   '16:9'  - every wall generates 16:9, per explicit request.
+//   'wall'  - each wall generates at its own true shape from theatre.js
+//             (sides 3840x1600 = 2.40, centre 3840x1920 = 2.00).
+// These disagree, and the disagreement is real rather than cosmetic: no wall
+// in this room IS 16:9, so a 16:9 frame has to be cropped or stretched to fit
+// one, and theatre.js carries a written note that forcing 16:9 on every wall
+// was previously found to be wrong for exactly that reason. It is one word to
+// switch back, and nothing else needs to change.
+const DEFAULT_ASPECT = '16:9';
+
 async function renderFieldsFor(kind, id, jst){
   const schema = await loadModelSchema(jst);
   const container = document.getElementById(`${kind}fields-${id}`);
@@ -1761,6 +2081,390 @@ function wireStats(){
 //   LIBRARY    every finished generation, streamed from Higgsfield
 //   PLAYER     watch clips side by side - library picks or local files, own transport
 //   STATISTICS what the tool has learned, and the export to hand to a teammate
+
+
+// ================= THE CONSOLE =================
+// Long-form explanation used to live permanently next to the controls it
+// described. It is all still here - it just stopped occupying the screen.
+// logNote() with a key REPLACES that key's entry instead of appending, which
+// matters because the rig readout re-renders on every preset/speed change and
+// would otherwise bury everything else within a minute.
+const CONSOLE_MARKUP = `
+  <div class="uiconsole collapsed" id="uiconsole">
+    <button class="uiconsole-tab" id="uiconsoleToggle" type="button"
+      title="The explanatory notes and status this page used to print inline. Nothing here is lost - it is just out of the way.">
+      <span>Console</span><span class="uiconsole-count" id="uiconsoleCount">0</span>
+    </button>
+    <div class="uiconsole-body">
+      <div class="uiconsole-head">
+        <strong>Console</strong>
+        <span class="sub">the notes and status this page used to print beside every control</span>
+        <button class="btn ghost small" id="uiconsoleClear" type="button">Clear</button>
+      </div>
+      <div class="uiconsole-list" id="uiconsoleList">
+        <div class="uiconsole-empty">Nothing logged yet.</div>
+      </div>
+    </div>
+  </div>`;
+
+const consoleKeyed = new Map();
+
+function logNote(source, html, key){
+  const list = document.getElementById('uiconsoleList');
+  if (!list) return;
+  const empty = list.querySelector('.uiconsole-empty');
+  if (empty) empty.remove();
+  const stamp = new Date().toLocaleTimeString();
+  let el = key ? consoleKeyed.get(key) : null;
+  if (el && el.isConnected) {
+    el.querySelector('.uic-when').textContent = stamp;
+    el.querySelector('.uic-body').innerHTML = html;
+  } else {
+    el = document.createElement('div');
+    el.className = 'uic-entry';
+    el.innerHTML = `<div class="uic-meta"><span class="uic-src"></span><span class="uic-when"></span></div>`
+                 + `<div class="uic-body"></div>`;
+    el.querySelector('.uic-src').textContent = source;
+    el.querySelector('.uic-when').textContent = stamp;
+    el.querySelector('.uic-body').innerHTML = html;
+    if (key) consoleKeyed.set(key, el);
+  }
+  list.prepend(el);
+  const c = document.getElementById('uiconsoleCount');
+  if (c) c.textContent = String(list.querySelectorAll('.uic-entry').length);
+}
+
+function openConsole(){
+  const box = document.getElementById('uiconsole');
+  if (box) box.classList.remove('collapsed');
+}
+
+function wireConsole(){
+  document.body.insertAdjacentHTML('beforeend', CONSOLE_MARKUP);
+  document.getElementById('uiconsoleToggle').addEventListener('click', () => {
+    document.getElementById('uiconsole').classList.toggle('collapsed');
+  });
+  document.getElementById('uiconsoleClear').addEventListener('click', () => {
+    consoleKeyed.clear();
+    const list = document.getElementById('uiconsoleList');
+    list.innerHTML = '<div class="uiconsole-empty">Nothing logged yet.</div>';
+    document.getElementById('uiconsoleCount').textContent = '0';
+  });
+  // Any control can hand its paragraph to the console with one attribute.
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-why]');
+    if (!b) return;
+    const note = WHY_NOTES[b.dataset.why];
+    if (!note) return;
+    logNote(note.source, note.html, 'why:' + b.dataset.why);
+    openConsole();
+  });
+}
+
+// The paragraphs that used to be printed permanently on the page. Kept
+// verbatim - the point of moving them was the screen space, not the content.
+const WHY_NOTES = {
+  about: { source: 'Tri-Wall', html:
+    '<strong>One camera rig, three synchronized views.</strong> State what the physical camera does '
+    + 'once &mdash; the locked rules for all three walls are derived from it, coupled and '
+    + 'mirror-symmetric, so a push-in reads as one continuous move across the whole wall instead of '
+    + 'three walls each pushing in separately.<br><br>'
+    + 'Scene &amp; prompts sync from the <code>/tri-wall</code> conversation &mdash; click '
+    + '"Sync from chat" after asking Claude to draft.' },
+  signin: { source: 'Login', html:
+    'Sign-in is handled entirely by each vendor\'s own CLI in its own browser flow. This tool never '
+    + 'asks for, stores or transmits a password, API key or token &mdash; there is no field here that '
+    + 'takes one. Your session lives in your own home directory and your credits are billed to your '
+    + 'own account.' },
+};
+
+// ================= THE IMAGE SETS SHELF =================
+// Several image sets accumulate in the time one clip takes to render, so the
+// Image tab needs somewhere to put the finished ones. A set is the three wall
+// pictures plus the text that made them; the server holds them (see
+// archiveLiveSet) and nothing is destroyed by starting the next look.
+const SETS_MARKUP = `
+  <div class="card" id="setsCard" style="margin:0 0 12px;">
+    <h2>Image sets <span class="sub">every trio you have built; the live one is on the walls below</span></h2>
+    <p style="margin:0 0 10px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;">
+      Video is the slow step. Start the next look while one renders &mdash; a new centre reference no longer
+      throws the last trio away, it files it here. Pictures are never deleted from <code>uploads/</code>,
+      so a set keeps working for as long as that folder does.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+      <button class="btn small" id="setSaveBtn" title="Store the three walls as they stand. Pressing this twice updates the same set rather than making a copy.">Save this set</button>
+      <button class="btn ghost small" id="setNewBtn" title="Clear the walls and begin a new trio. The current one is filed here first.">Start a new set</button>
+      <span class="statusline" id="setsStatus" style="margin:0;"></span>
+    </div>
+    <div id="setsList"></div>
+  </div>`;
+
+// A compact strip at the top of the Video tab: which trio the walls are
+// carrying, and a way to swap without leaving the tab. Video renders from
+// whatever is on the walls (wallReferencePath), so "which set is loaded" is
+// the single fact that decides what a clip will be made of.
+const VIDEO_SET_MARKUP = `
+  <div class="card" id="videoSetCard" style="margin:0 0 12px;">
+    <h2>Source set <span class="sub">the trio these clips will be generated from</span></h2>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <select id="videoSetPick" style="max-width:340px;"></select>
+      <button class="btn ghost small" id="videoSetLoadBtn">Put it on the walls</button>
+      <button class="btn small" id="approveWaitingBtn" style="display:none;"></button>
+      <span class="statusline" id="videoSetStatus" style="margin:0;"></span>
+    </div>
+    <div id="videoSetPreview"></div>
+  </div>`;
+
+let imageSets = [], liveSetId = null;
+
+function setThumbFor(wall){
+  if (!wall) return null;
+  if (wall.genImageUrl) return wall.genImageUrl;
+  const pth = wall.approvedImagePath || wall.uploadedImagePath;
+  return pth ? '/uploads/' + String(pth).split(/[\\/]/).pop() : null;
+}
+
+function setWallCount(set){
+  return ['left','center','right'].filter(w => setThumbFor((set.walls || {})[w])).length;
+}
+
+function renderSets(){
+  const list = document.getElementById('setsList');
+  if (!list) return;
+  if (!imageSets.length) {
+    list.innerHTML = '<p class="sub" style="margin:0;">Nothing on the shelf yet. Build a trio below and press '
+      + '<strong>Save this set</strong> &mdash; or just start the next look, and this one gets filed automatically.</p>';
+  } else {
+    list.innerHTML = '<div class="setgrid">' + imageSets.map(set => {
+      const live = set.id === liveSetId;
+      const thumbs = ['left','center','right'].map(w => {
+        const src = setThumbFor((set.walls || {})[w]);
+        return src ? `<img src="${src}" alt="${w} wall">` : `<span class="setempty">${w[0].toUpperCase()}</span>`;
+      }).join('');
+      const when = new Date(set.updatedAt || set.createdAt).toLocaleString();
+      return `<div class="setitem${live ? ' live' : ''}">
+        <div class="setthumbs">${thumbs}</div>
+        <div class="setmeta">
+          <input class="setname" data-setid="${set.id}" value="${String(set.name || '').replace(/"/g, '&quot;')}"
+                 title="Rename this set">
+          <div class="setsub">${setWallCount(set)} of 3 walls &middot; ${when}${live ? ' &middot; <strong>on the walls now</strong>' : ''}</div>
+          <div class="setacts">
+            <button class="btn ghost small" data-setload="${set.id}"${live ? ' disabled' : ''}>${live ? 'Loaded' : 'Load'}</button>
+            <button class="btn ghost small" data-setdel="${set.id}" title="Removes the grouping and its text. The pictures stay in uploads/.">Delete</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+  }
+  // Keep the Video tab's picker in step with the shelf.
+  const pick = document.getElementById('videoSetPick');
+  if (pick) {
+    pick.innerHTML = imageSets.length
+      ? imageSets.map(x => `<option value="${x.id}"${x.id === liveSetId ? ' selected' : ''}>`
+          + `${String(x.name || '')} - ${setWallCount(x)}/3 walls${x.id === liveSetId ? ' (on the walls now)' : ''}</option>`).join('')
+      : '<option value="">No saved sets yet</option>';
+    const btn = document.getElementById('videoSetLoadBtn');
+    if (btn) btn.disabled = !imageSets.length;
+    const st = document.getElementById('videoSetStatus');
+    if (st && !st.textContent) st.textContent = imageSets.some(x => x.id === liveSetId)
+      ? '' : 'The walls are carrying an unsaved trio.';
+  }
+  refreshApproveWaiting();
+  renderVideoSetPreview();
+}
+
+// Walls holding a generated image nobody has accepted yet. These are the
+// walls whose video card looks empty, so the count belongs on the Video tab
+// rather than only on the Image tab where the per-wall Approve buttons are.
+function wallsAwaitingApproval(){
+  if (!state || !state.walls) return [];
+  return WALLS.filter(w => {
+    const st = state.walls[w.id];
+    return st && st.genImageUrl && !st.approvedImagePath;
+  }).map(w => w.id);
+}
+
+function refreshApproveWaiting(){
+  const btn = document.getElementById('approveWaitingBtn');
+  if (!btn) return;
+  const waiting = wallsAwaitingApproval();
+  btn.style.display = waiting.length ? 'inline-block' : 'none';
+  btn.textContent = waiting.length === 1
+    ? `Approve the ${waiting[0]} wall's image`
+    : `Approve ${waiting.length} waiting images`;
+  btn.title = 'These walls have a generated image that has never been approved, so video '
+    + 'cannot see it yet. This approves them all and they become the reference frames for the clips.';
+}
+
+async function approveWaitingImages(btn){
+  const waiting = wallsAwaitingApproval();
+  const st = document.getElementById('videoSetStatus');
+  if (!waiting.length) return;
+  btn.disabled = true;
+  if (st) { st.className = 'statusline'; st.textContent = 'Approving\u2026'; }
+  const failed = [];
+  for (const id of waiting) {
+    try {
+      await api('/api/approve', { method:'POST', headers:{'Content-Type':'application/json'},
+                                  body: JSON.stringify({ wall: id }) });
+    } catch (e) { failed.push(`${id}: ${e.message}`); }
+  }
+  state = await api('/api/state');
+  WALLS.forEach(w => refreshWallImageDisplays(w.id));
+  refreshApproveWaiting();
+  btn.disabled = false;
+  if (st) {
+    if (failed.length) {
+      st.className = 'statusline';
+      st.innerHTML = `<span class="error-text">${failed.join('; ')}</span>`;
+    } else {
+      st.className = 'statusline ok';
+      st.textContent = `Approved ${waiting.length === 1 ? 'it' : 'all ' + waiting.length}. `
+        + 'These are now the reference frames for the clips below.';
+    }
+  }
+}
+
+// WHAT IS ABOUT TO GO ON THE WALLS. Picking a set by name alone asks the
+// operator to remember which trio "Set 3" was; these are pictures, and the
+// whole decision is visual. Shows the selected set's left/centre/right exactly
+// as they will land in the video cards below, so "Put it on the walls" is
+// never a guess. Walls the set does not carry are drawn as gaps rather than
+// omitted - an incomplete set should look incomplete.
+function renderVideoSetPreview(){
+  const host = document.getElementById('videoSetPreview');
+  const pick = document.getElementById('videoSetPick');
+  if (!host || !pick) return;
+  const set = imageSets.find(x => x.id === pick.value);
+  if (!set) { host.innerHTML = ''; return; }
+  const live = set.id === liveSetId;
+  const cells = WALLS.map(w => {
+    const src = setThumbFor((set.walls || {})[w.id]);
+    return `<div class="vsp-cell">
+      <div class="vsp-label">${w.label}</div>
+      ${src ? `<img src="${src}" alt="${w.label}">`
+            : '<div class="vsp-gap">no image in this set</div>'}
+    </div>`;
+  }).join('');
+  const n = setWallCount(set);
+  host.innerHTML = `<div class="vsp">
+      <div class="vsp-head">${set.name} &middot; ${n} of 3 walls`
+    + (live ? ' &middot; <strong>already on the walls</strong>'
+            : ' &middot; press &ldquo;Put it on the walls&rdquo; to use it')
+    + (n < 3 ? ' &middot; <span class="vsp-warn">a wall with no image cannot be generated</span>' : '')
+    + `</div><div class="vsp-row">${cells}</div></div>`;
+}
+
+async function refreshSets(){
+  try {
+    const r = await api('/api/image-sets');
+    imageSets = r.sets || [];
+    liveSetId = r.liveSetId || null;
+  } catch (e) { imageSets = []; liveSetId = null; }
+  renderSets();
+}
+
+function setsSay(msg, bad){
+  const el = document.getElementById('setsStatus');
+  if (!el) return;
+  el.className = 'statusline' + (bad ? '' : ' ok');
+  el.innerHTML = bad ? `<span class="error-text">${msg}</span>` : msg;
+}
+
+async function wireSets(){
+  document.getElementById('setSaveBtn').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      const r = await api('/api/image-set-save', { method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+      await refreshSets();
+      setsSay(`Saved as <strong>${r.set.name}</strong>.`);
+    } catch (err) { setsSay(err.message, true); }
+    finally { e.target.disabled = false; }
+  });
+
+  document.getElementById('setNewBtn').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      const r = await api('/api/image-set-new', { method:'POST' });
+      try { sessionStorage.setItem('triwall_notice', r.archivedSet
+        ? `Started a new set. The previous trio was filed as "${r.archivedSet.name}".`
+        : 'Started a new set.'); } catch (x) {}
+      location.reload();
+    } catch (err) { setsSay(err.message, true); e.target.disabled = false; }
+  });
+
+  document.getElementById('setsList').addEventListener('click', async (e) => {
+    const load = e.target.closest('[data-setload]');
+    const del  = e.target.closest('[data-setdel]');
+    if (load) {
+      try {
+        await api('/api/image-set-load', { method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: load.dataset.setload }) });
+        try { sessionStorage.setItem('triwall_notice', 'Set loaded onto the walls.'); } catch (x) {}
+        location.reload();
+      } catch (err) { setsSay(err.message, true); }
+    } else if (del) {
+      const set = imageSets.find(x => x.id === del.dataset.setdel);
+      openModal('Remove this set?', (body) => {
+        const q = document.createElement('p');
+        q.innerHTML = `<b>${set ? set.name : 'This set'}</b> leaves the shelf. `
+          + `Its pictures stay in <code>uploads/</code> &mdash; what goes is the grouping and the descriptions.`;
+        body.appendChild(q);
+      }, [
+        { label: 'Remove it', onClick: async () => {
+            closeModal();
+            try {
+              await api('/api/image-set-delete', { method:'POST',
+                headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: del.dataset.setdel }) });
+              await refreshSets();
+              setsSay('Removed.');
+            } catch (err) { setsSay(err.message, true); }
+          } },
+        { spacer: true },
+        { label: 'Keep it', cls: 'btn ghost', onClick: () => closeModal() },
+      ]);
+    }
+  });
+
+  document.getElementById('setsList').addEventListener('change', async (e) => {
+    const name = e.target.closest('.setname');
+    if (!name) return;
+    try {
+      await api('/api/image-set-rename', { method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ id: name.dataset.setid, name: name.value }) });
+      await refreshSets();
+    } catch (err) { setsSay(err.message, true); }
+  });
+
+  const vpick = document.getElementById('videoSetPick');
+  if (vpick) vpick.addEventListener('change', renderVideoSetPreview);
+
+  const awb = document.getElementById('approveWaitingBtn');
+  if (awb) awb.addEventListener('click', () => approveWaitingImages(awb).catch(e => console.error(e)));
+
+  const vload = document.getElementById('videoSetLoadBtn');
+  if (vload) vload.addEventListener('click', async (e) => {
+    const id = document.getElementById('videoSetPick').value;
+    if (!id) return;
+    e.target.disabled = true;
+    try {
+      await api('/api/image-set-load', { method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
+      try { sessionStorage.setItem('triwall_tab', 'video');
+            sessionStorage.setItem('triwall_notice', 'Set loaded onto the walls.'); } catch (x) {}
+      location.reload();
+    } catch (err) {
+      const st = document.getElementById('videoSetStatus');
+      if (st) st.innerHTML = `<span class="error-text">${err.message}</span>`;
+      e.target.disabled = false;
+    }
+  });
+
+  await refreshSets();
+}
+
 const TAB_LAYOUT = [
   { id:'login', label:'Login',      anchors:['connHead'] },
   { id:'image', label:'Image',      anchors:['sceneRow','imgHead','refineHead'] },
@@ -2154,6 +2858,13 @@ function buildTabs(){
 
   // Library owns no existing markup, so it is built here rather than
   // assembled from relocated sections like the other three.
+  // The shelf and the Video tab's source-set strip. Both own their markup
+  // outright rather than being assembled from relocated page sections, so
+  // they are injected the same way the Library tab is.
+  panels.image.insertAdjacentHTML('afterbegin', SETS_MARKUP);
+  panels.video.insertAdjacentHTML('afterbegin', VIDEO_SET_MARKUP);
+  wireSets().catch(e => console.error('image sets shelf failed to wire:', e));
+
   panels.library.insertAdjacentHTML('afterbegin', LIBRARY_MARKUP);
   ['libKind','libWall','libRating'].forEach(id =>
     document.getElementById(id).addEventListener('change', () => refreshLibrary().catch(() => {})));
@@ -2652,14 +3363,20 @@ const VIDEO_MODE_HINT = {
          + 'the one move.',
 };
 
-function setMode(group, value){
+function setMode(group, value, persist){
   const wrap = document.getElementById(group === 'image' ? 'imageSourceMode' : 'videoSourceMode');
   const attr = group === 'image' ? 'imode' : 'vmode';
   if (!wrap) return;
   [...wrap.querySelectorAll('.modebtn')].forEach(b =>
     b.classList.toggle('active', b.dataset[attr] === value));
+  // These two paragraphs restated each other and the mode buttons directly
+  // above them. The text is kept - it just goes to the console now instead of
+  // sitting between the mode picker and the controls it describes.
+  const hintText = (group === 'image' ? IMAGE_MODE_HINT : VIDEO_MODE_HINT)[value] || '';
   const hint = document.getElementById(group === 'image' ? 'imageModeHint' : 'videoModeHint');
-  if (hint) hint.textContent = (group === 'image' ? IMAGE_MODE_HINT : VIDEO_MODE_HINT)[value] || '';
+  if (hint) hint.textContent = '';
+  if (hintText) logNote(group === 'image' ? 'Image \u00b7 mode' : 'Video \u00b7 mode',
+                        hintText, 'mode:' + group);
   if (group === 'image') {
     // Option C is the only one that needs the decode slot.
     applyImageDisclosure(value);
@@ -2671,11 +3388,13 @@ function setMode(group, value){
     const dz = document.getElementById('decodeSection');
     if (dz) dz.style.display = value === 'decoded' ? '' : 'none';
     const bar = document.getElementById('rigbarNote');
-    if (bar) bar.textContent = value === 'decoded'
+    const barText = value === 'decoded'
       ? 'These are filled in from the decoded reference — change them only to override what was measured.'
       : 'Choose what the physical camera does. All three walls are derived from this one choice.';
+    if (bar) bar.textContent = '';
+    logNote('Video \u00b7 mode', barText, 'rigbarnote');
   }
-  try { localStorage.setItem('triwall.mode.' + group, value); } catch (e) {}
+  if (persist) { try { localStorage.setItem('triwall.mode.' + group, value); } catch (e) {} }
 }
 
 ['image','video'].forEach(group => {
@@ -2683,11 +3402,17 @@ function setMode(group, value){
   if (!wrap) return;
   wrap.addEventListener('click', e => {
     const b = e.target.closest('.modebtn');
-    if (b) setMode(group, b.dataset[group === 'image' ? 'imode' : 'vmode']);
+    if (b) setMode(group, b.dataset[group === 'image' ? 'imode' : 'vmode'], true);
   });
   let saved = null;
   try { saved = localStorage.getItem('triwall.mode.' + group); } catch (e) {}
-  setMode(group, saved || (group === 'image' ? 'text' : 'decoded'));
+  // Video now opens on B (pick a preset camera path). Decoding a client clip
+  // is the exception, not the routine case: most sets start from one of our
+  // own measured C_ moves, and opening on A put an upload slot in front of
+  // that every time. Note setMode's third argument: applying a default must
+  // not persist it, or this line could never change behaviour for anyone who
+  // had already opened the page once.
+  setMode(group, saved || 'text', false);
 });
 
 // ================= CONNECTIONS =================
@@ -2731,7 +3456,7 @@ function renderPreflight(d){
       : '';
     const session = c.session
       ? `<div class="detail">Session valid for ${c.session.hoursLeft}h (expires ${new Date(c.session.expiresAt).toLocaleString()}).</div>` : '';
-    return `<div class="conn">
+    return `<div class="conn ${c.required ? 'is-required' : 'is-optional'}">
       <span class="dot ${cls}"></span>
       <div>
         <div class="name">${c.label}<span class="req">${c.required ? 'required' : 'optional'}</span></div>
@@ -3499,32 +4224,59 @@ async function refreshPresetDebug(){
 // pushes the picture toward frame left. The prompt states the picture,
 // because naming the camera is what inverted it every previous time; the
 // panel states both so the two can be checked against each other.
+let rsrOpen = false;   // the per-wall direction table, closed until asked for
 function renderRigSpeedReadout(spec){
   const host = document.getElementById('rigSpeedReadout');
   if (!host) return;
   const rows = spec.rows || [];
   const over = rows.some(r => r.overSafeCap);
 
-  host.innerHTML =
-    '<div class="rsr-head"><strong>Speed %</strong> and <strong>Clip seconds</strong> are independent: '
+  const prose =
+    '<strong>Speed %</strong> and <strong>Clip seconds</strong> are independent: '
     + 'Speed is a measured RATE (100% = 8.48% of frame width per second on a side wall, from '
     + (spec.refClip || 'the reference render') + '), and travel = rate x duration - so doubling the '
     + 'speed doubles the distance at any clip length, and changing the clip length alone does not '
     + 'change the pace. Clip seconds also sets every wall\'s own model duration field, since a '
     + 'contract that states a different length than the model renders invalidates every checkpoint. '
     + 'There is no km/h anywhere in this - pixels carry no depth, so none was ever measurable. The '
-    + 'camera/picture lines below are not sent: the prompt states the picture only.</div>'
-    + '<table class="rsr">' + rows.map(r => {
+    + 'camera/picture lines are not sent: the prompt states the picture only.';
+
+  const table = '<table class="rsr">' + rows.map(r => {
         const g = r.gloss || {};
         return '<tr><td class="rsr-w">' + r.wall + '</td>'
           + '<td class="rsr-c">' + esc(g.camera || '') + '</td>'
           + '<td class="rsr-a">&rarr;</td>'
           + '<td class="rsr-p">' + esc(g.picture || '') + '</td>'
           + '<td class="rsr-n">' + esc(g.numbers || '') + '</td></tr>';
-      }).join('') + '</table>'
-    + (over ? '<div class="rsr-warn">Over the ' + spec.safePxPerFrame + ' px/frame room ceiling at '
-              + spec.durationSec + 's. Lengthen the clip to calm it, or accept it as a short beat.</div>'
-            : '');
+      }).join('') + '</table>';
+
+  const warn = over
+    ? '<div class="rsr-warn">Over the ' + spec.safePxPerFrame + ' px/frame room ceiling at '
+      + spec.durationSec + 's. Lengthen the clip to calm it, or accept it as a short beat.</div>'
+    : '';
+
+  // ON SCREEN: the warning, and a way in. The paragraph and the per-wall
+  // camera/picture table were permanent fixtures here - correct, and read
+  // maybe twice ever after the first week, while costing a screenful above
+  // the controls they describe on every single visit. The warning is the one
+  // part that is genuinely time-critical (it says this clip will tear), so it
+  // stays put; the rest is one click away and mirrored into the console.
+  host.innerHTML = warn
+    + '<div class="rsr-actions">'
+    + '<button class="whybtn" type="button" id="rsrToggle" style="margin-left:0;">'
+    + (rsrOpen ? 'hide the per-wall directions' : 'show the per-wall directions') + '</button>'
+    + '<button class="whybtn" type="button" id="rsrExplain">why speed and clip length are separate</button>'
+    + '</div>'
+    + (rsrOpen ? '<div class="rsr-detail">' + table + '</div>' : '');
+
+  // The console always carries the full thing, so it is readable without
+  // touching the page at all.
+  logNote('Video \u00b7 rig', prose + table + warn, 'rig-readout');
+
+  const t = document.getElementById('rsrToggle');
+  if (t) t.addEventListener('click', () => { rsrOpen = !rsrOpen; renderRigSpeedReadout(spec); });
+  const x = document.getElementById('rsrExplain');
+  if (x) x.addEventListener('click', () => { logNote('Video \u00b7 rig', prose, 'rig-prose'); openConsole(); });
 }
 
 function esc(t){ return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
@@ -4372,6 +5124,7 @@ async function generate(kind, id){
       clearWallRating('img', id);
       refreshWallImageDisplays(id);
       document.getElementById(`imgapprove-${id}`).style.display = result.url ? 'block' : 'none';
+      refreshApproveWaiting();
     } else {
       clearWallRating('vid', id);
       // Stamp the clip with the rig move it was generated under. Without this
@@ -4589,6 +5342,7 @@ IMAGE_WALLS.forEach(w => {
       }
       state = await api('/api/state');
       renderDropzone('vid', w.id);
+      refreshApproveWaiting();
       statusEl.textContent = 'Approved — now the reference for this wall\'s video.';
     } catch (e) {
       statusEl.innerHTML = `<span class="error-text">${e.message}</span>`;
@@ -4608,6 +5362,7 @@ WALLS.forEach(w => {
       await api('/api/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ wall: w.id }) });
       state = await api('/api/state');
       renderDropzone('vid', w.id);
+      refreshApproveWaiting();
       statusEl.textContent = 'Approved — now the reference for this wall\'s video.';
     } catch (e) {
       statusEl.innerHTML = `<span class="error-text">${e.message}</span>`;
@@ -4654,6 +5409,9 @@ async function verifyBuild(){
 }
 
 (async function init(){
+  // The console has to exist before anything can log into it - logNote() is a
+  // no-op while its list is missing, and the rig readout fires during init.
+  try { wireConsole(); } catch (e) { console.error('console failed to wire:', e); }
   // FIRST, synchronous, before any network call. Tabs used to be built from
   // the finished page as the LAST step, so every load showed the full
   // nine-section scroll for as long as the catalog/state/rig-rules calls
@@ -4734,6 +5492,27 @@ async function verifyBuild(){
   // that state, models and rig rules have all settled, so the panel reflects
   // the real thing rather than a mid-load guess.
   try { await refreshPresetDebug(); } catch (e) {}
+})();
+</script>
+<script>
+// Light / dark stock. Kept in its own block so the main script above stays
+// untouched by the restyle. Nothing else reads this — it only sets an
+// attribute on <html>, which the stylesheet keys off.
+(function () {
+  const root = document.documentElement;
+  const btn = document.getElementById('themeToggle');
+  let saved = null;
+  try { saved = localStorage.getItem('triwall_theme'); } catch (e) {}
+  function apply(mode) {
+    if (mode === 'dark') root.setAttribute('data-theme', 'dark');
+    else root.removeAttribute('data-theme');
+    if (btn) btn.textContent = (mode === 'dark') ? 'Light' : 'Dark';
+    try { localStorage.setItem('triwall_theme', mode); } catch (e) {}
+  }
+  apply(saved === 'dark' ? 'dark' : 'light');
+  if (btn) btn.addEventListener('click', () => {
+    apply(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
 })();
 </script>
 </body>
