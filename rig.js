@@ -390,7 +390,7 @@ function choreographyRule(wallId, rig) {
   return `Fixed travelling-element rule: ${many ? '' : 'a single '}${c.subject} ` +
     `cross${many ? '' : 'es'} the whole three-wall rig as one ` +
     `continuous journey, ${dir.replace(/_/g, '-')}, at a steady pace of about ` +
-    `${sched.ratePctPerSec.toFixed(1)}% of the total wall width per second. ` +
+    `${sched.roomPctPerSec.toFixed(1)}% of the total wall width per second. ` +
     `On THIS wall it must enter frame at the ${enterEdge} edge at about ${inAt}s and exit at the ` +
     `${exitEdge} edge at about ${outAt}s — roughly ${perWall}s on screen, crossing at a constant speed and ` +
     `constant height, never pausing, never reversing, never leaving and re-entering. ` +
@@ -589,12 +589,23 @@ function rigFromProbe(probe, base) {
     rig.decodedRate = Math.abs(measuredRate).toFixed(2) + '%/s measured off the reference clip';
   }
   if (probe && probe.elements) {
+    // A decoded clip measures a PACE; the rig is set by WINDOWS now, so turn the
+    // pace into a chained relay across this clip rather than storing a rate the
+    // schedule no longer reads. The operator can then move any of the six boxes.
+    const e = probe.elements;
+    const dir = e.direction === 'left_to_right' ? 'left_to_right' : 'right_to_left';
+    const order = dir === 'right_to_left' ? ['right', 'center', 'left'] : ['left', 'center', 'right'];
+    const dur = Math.max(1, Number(rig.durationSec) || 5);
+    let perWall = Number(e.per_wall_s) > 0 ? Number(e.per_wall_s) : dur / 3;
+    if (perWall * 3 > dur) perWall = dur / 3;          // never point past the clip
+    const entry = Math.max(0, Math.min(2.0, dur - perWall * 3));
+    const windows = {};
+    order.forEach((w, i) => {
+      windows[w] = { enter: +(entry + i * perWall).toFixed(2),
+                     exit: +(entry + (i + 1) * perWall).toFixed(2) };
+    });
     rig.element = Object.assign({}, rig.element, {
-      enabled: true,
-      direction: probe.elements.direction,
-      ratePctPerSec: probe.elements.rate_pct_per_s,
-      perWallSec: probe.elements.per_wall_s,
-      detected: true,
+      enabled: true, direction: dir, windows: windows, detected: true,
     });
   }
   return rig;
@@ -609,13 +620,22 @@ function defaultRig() {
     tiltDegPerSec: 4,
     durationSec: 5,
     element: { enabled: false, subject: '', direction: 'right_to_left',
-               ratePctPerSec: RIG_TARGETS.elementRatePctPerSec,
                // How tall it is as a percent of frame height. Nothing stated
                // this, and one delivered set drew small distant owls on the
                // right wall and a single close-up filling half the frame on the
                // left - same prompt, same reference picture.
                sizePctOfHeight: 12,
-               perWallSec: RIG_TARGETS.elementPerWallSec, entrySec: 2.0 },
+               // And how high up it crosses. Same gap, same symptom: the right
+               // wall's owls crossed near the horizon and the left wall's sat
+               // low, so the room read as three flights rather than one.
+               heightPctFromTop: 35,
+               // WHEN IT IS ON EACH WALL, in seconds. This replaced the
+               // "% of the room per second" pace box: the operator sets the two
+               // times per wall and rigspec.elementSchedule reads the crossing
+               // speed off them. Defaults chain the relay across a 5s clip.
+               windows: { right:  { enter: 0.5, exit: 2.0 },
+                          center: { enter: 2.0, exit: 3.5 },
+                          left:   { enter: 3.5, exit: 5.0 } } },
   };
 }
 

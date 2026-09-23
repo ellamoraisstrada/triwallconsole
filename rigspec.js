@@ -163,6 +163,43 @@ const MOVES = {
   },
 };
 
+// ------------------------------------------- THE RIGHT WALL IS INVERTED ---
+// THIS IS A COMPENSATION, NOT GEOMETRY. The table above is the room's real
+// behaviour and is not to be edited: looking right, "forward" is toward the
+// LEFT of that view, so a forward dolly streams the right wall's content toward
+// frame RIGHT (+0.61), the exact mirror of the left wall. That is correct and
+// stays correct.
+//
+// What is also true is that the generator does the opposite, every time, in
+// both directions. Measured on the right wall, four clips, two presets:
+//
+//     clip                     preset      asked      delivered
+//     R_bear_Pushin.mp4        C_PushIn    +0.4276     -0.1789
+//     R_Toronto_Pushout.mp4    C_PushOut   -0.4276     +0.0826
+//     19:40 Toronto set        C_PushOut   -0.4276     +0.0826
+//     18:52 Toronto set        C_PushOut   -0.4276     +0.2330
+//
+// Four for four, both signs, sign flipped every time. Three rounds of rewording
+// have moved the magnitude and never the sign - the last one took the wrong-way
+// travel from +0.233 to +0.083 and still did not turn it round. At that point
+// the honest thing is to stop arguing with it: ask the right wall for the
+// opposite of what the room wants and let the inversion deliver the right
+// answer. The owner asked for exactly this ("dont change the prompts just
+// launch the parameters inverse").
+//
+// TWO PLACES MUST NOT SEE THE INVERTED NUMBER:
+//   * compare(), which grades a finished clip - the clip should MEASURE the
+//     room's geometry, so it is graded against dxDelivered, not the ask; and
+//   * the motion-lock end frame, which warps the plate itself. A start/end pair
+//     is an interpolation between two real images, so nothing inverts it, and
+//     feeding it the inverted ask would break the one lever that works.
+// Both read the `*Delivered` fields. Everything the PROMPT is built from reads
+// the plain fields, so the contract is inverted whole and stays self-consistent.
+//
+// To retire this, set right back to +1 and measure a set. If the generator has
+// changed, the sign will come back on its own.
+const DELIVERY_SIGN = { left: +1, center: +1, right: -1 };
+
 // The house coherent-lateral-flow ceiling for the side walls, from the wall
 // brief's energy table: 6 px per frame at master resolution. Reported, never
 // silently applied — the reference gesture itself runs above it because it is a
@@ -338,14 +375,26 @@ function spec(moveId, wallId, durationSec, speedPct, centrePct) {
     ? ((Number.isFinite(cp) && cp > 0) ? cp : CENTRE_TRIM_DEFAULT) / 100
     : 1;
   const g = gestureFraction(speedPct, T) * centreTrim;
-  const dxTotal = raw.dx * conv * g;
-  const dxRate = dxTotal / T;                       // frame-widths per second
-  const dyTotal = raw.dy * (MASTER_H / WALL_H[w]) * g;
 
+  // THE ROOM'S OWN FIGURES FIRST - what a correct finished clip must measure.
+  const dxDelivered = raw.dx * conv * g;
+  const dyDelivered = raw.dy * (MASTER_H / WALL_H[w]) * g;
   // Scale compounds, so it takes the gesture fraction as an exponent. Because
   // the two presets' raw scales are exact reciprocals (x2.00 and x0.50), so are
   // their results at any speed and any duration.
-  const scaleTotal = Math.pow(raw.scale, g);
+  const scaleDelivered = Math.pow(raw.scale, g);
+
+  // THEN THE ASK, which on the right wall is the opposite of it. See
+  // DELIVERY_SIGN above: four measured clips, two presets, sign flipped every
+  // time, so the ask is flipped to compensate. Applying it as a multiplier on
+  // dx and as a sign on the scale EXPONENT keeps the inverted ask an exact
+  // reciprocal of the delivered figure, the same way the two presets are exact
+  // reciprocals of each other.
+  const sign = DELIVERY_SIGN[w] || 1;
+  const dxTotal = dxDelivered * sign;
+  const dxRate = dxTotal / T;                       // frame-widths per second
+  const dyTotal = dyDelivered * sign;
+  const scaleTotal = Math.pow(raw.scale, g * sign);
   const scaleRate = Math.pow(scaleTotal, 1 / T);
   const pxPerFrame = Math.abs(dxTotal) * WALL_PX[w] / (T * FPS);
 
@@ -368,6 +417,14 @@ function spec(moveId, wallId, durationSec, speedPct, centrePct) {
     dxTotal: round(dxTotal, 4), dxRate: round(dxRate, 4),
     dyTotal: round(dyTotal, 4), dyRate: round(dyTotal / T, 4),
     scaleTotal: round(scaleTotal, 4), scaleRate: round(scaleRate, 4),
+    // What a CORRECT finished clip must measure, before the right wall's
+    // inversion is compensated for. compare() and the motion-lock end frame
+    // read these; everything the prompt is built from reads the plain ones.
+    dxDelivered: round(dxDelivered, 4),
+    dyDelivered: round(dyDelivered, 4),
+    scaleDelivered: round(scaleDelivered, 4),
+    deliveryInverted: sign !== 1,
+    towardEdgeDelivered: dxDelivered === 0 ? null : (dxDelivered > 0 ? 'RIGHT' : 'LEFT'),
     rollTotal: raw.roll,
     pxPerFrame: round(pxPerFrame, 2),
     overSafeCap: pxPerFrame > SAFE_PX_PER_FRAME && w !== 'center',
@@ -626,15 +683,24 @@ function compare(moveId, wallId, measured, speedPct, centrePct) {
   const want = spec(moveId, wallId, measured.durationSec || 5, speedPct, centrePct);
   const row = { wall: wallId, problems: [], want: want };
 
-  row.dx = { want: want.dxTotal, got: measured.dxTotal };
-  row.scale = { want: want.scaleTotal, got: measured.scaleTotal };
+  // GRADED AGAINST THE ROOM, NOT AGAINST THE ASK. On the right wall the two are
+  // opposites on purpose (see DELIVERY_SIGN): the contract asks for the reverse
+  // because the generator reverses it. A finished clip still has to MEASURE the
+  // room's own geometry, so that is what it is held to - otherwise inverting the
+  // ask would have inverted the verdict along with it and every correct right
+  // wall would come back "travelling the WRONG WAY".
+  const wantDx = want.dxDelivered;
+  const wantScale = want.scaleDelivered;
+  row.inverted = !!want.deliveryInverted;
+  row.dx = { want: wantDx, got: measured.dxTotal, asked: want.dxTotal };
+  row.scale = { want: wantScale, got: measured.scaleTotal, asked: want.scaleTotal };
   row.roll = { want: 0, got: measured.rollTotal };
   row.bgRatio = measured.bgRatio === undefined ? null : measured.bgRatio;
 
-  const dxWanted = Math.abs(want.dxTotal) > 0.05;
+  const dxWanted = Math.abs(wantDx) > 0.05;
   if (dxWanted) {
-    const sameDir = (want.dxTotal > 0) === (measured.dxTotal > 0);
-    const ratio = Math.abs(measured.dxTotal) / Math.abs(want.dxTotal);
+    const sameDir = (wantDx > 0) === (measured.dxTotal > 0);
+    const ratio = Math.abs(measured.dxTotal) / Math.abs(wantDx);
     row.dx.ratio = round(ratio, 2);
     row.dx.sameDirection = sameDir;
     // WRONG WAY GETS THE SAME ADVICE AS TOO-WEAK, and it had not been getting
@@ -657,9 +723,9 @@ function compare(moveId, wallId, measured, speedPct, centrePct) {
 
   // Scale is compared in log space: x2.0 and x0.5 are the same size of error,
   // and a linear comparison would call one of them twice as bad as the other.
-  const scaleWanted = Math.abs(want.scaleTotal - 1) > zoomDeadzone(want.wall);
+  const scaleWanted = Math.abs(wantScale - 1) > zoomDeadzone(want.wall);
   if (scaleWanted) {
-    const lw = Math.log(want.scaleTotal);
+    const lw = Math.log(wantScale);
     const lg = Math.log(Math.max(0.05, measured.scaleTotal));
     const sr = lg / lw;
     row.scale.ratio = round(sr, 2);
@@ -828,95 +894,168 @@ function elementCount(subject) {
  * Everything is derived from the rate and the clip length - nothing is read
  * back off the form, because two places computing it is how they drifted.
  */
+// The fallback windows, used only when a rig has no `element.windows` yet - a
+// state file saved before the timestamps replaced the rate box. Derived from the
+// old rate model so an existing scene keeps the timing it already had.
+function legacyWindows(c, dur) {
+  const rate = (Number.isFinite(Number(c.ratePctPerSec)) && Number(c.ratePctPerSec) > 0)
+    ? Number(c.ratePctPerSec) : 17.5;
+  const dir = c.direction === 'left_to_right' ? 'left_to_right' : 'right_to_left';
+  const order = dir === 'right_to_left' ? ['right', 'center', 'left'] : ['left', 'center', 'right'];
+  let perWall = (100 / 3) / rate;
+  let entry = Number.isFinite(Number(c.entrySec)) ? Number(c.entrySec) : 2.0;
+  if (perWall * 3 > dur) { perWall = dur / 3; entry = 0; }
+  else if (entry + perWall * 3 > dur) { entry = Math.max(0, dur - perWall * 3); }
+  const out = {};
+  order.forEach((w, i) => {
+    out[w] = { enter: round(entry + i * perWall, 2), exit: round(entry + (i + 1) * perWall, 2) };
+  });
+  return out;
+}
+
+/**
+ * The element's timetable for ONE wall, or null if no element is configured.
+ *
+ * THE OPERATOR STATES THE TIMES NOW, AND SPEED FALLS OUT OF THEM. It used to be
+ * the other way round: a "% of the room per second" box set the pace and the
+ * tool worked out the windows from it. That was backwards twice over -
+ *   * it is a unit nobody thinks in, and its own default (17.5%/s) asked for a
+ *     5.71s crossing that does not fit a 5s clip at all; and
+ *   * the windows were the thing that actually mattered, so the number that
+ *     mattered was being derived from a number chosen without seeing it.
+ * Each wall now carries `enter` and `exit` in seconds, they are clamped to the
+ * clip, and the crossing speed is REPORTED from them rather than set.
+ */
 function elementSchedule(rig, wallId) {
   const c = (rig && rig.element) || {};
   if (!c.enabled || !String(c.subject || '').trim()) return null;
 
+  const w = wallKey(wallId);
   const dur = Math.max(1, Number(rig && rig.durationSec) || 5);
-  const askedRate = Number(c.ratePctPerSec);
-  const rate = (Number.isFinite(askedRate) && askedRate > 0) ? askedRate : 17.5;
   const dir = c.direction === 'left_to_right' ? 'left_to_right' : 'right_to_left';
   const order = dir === 'right_to_left' ? ['right', 'center', 'left'] : ['left', 'center', 'right'];
-  const idx = order.indexOf(wallKey(wallId));
+  const idx = order.indexOf(w);
   if (idx < 0) return null;
 
-  const askedTotal = round(100 / rate, 2);
-  let perWall = (100 / 3) / rate;
-  let entry = Number.isFinite(Number(c.entrySec)) ? Number(c.entrySec) : 2.0;
-  let fittedRate = null;
+  const wins = (c.windows && typeof c.windows === 'object') ? c.windows : legacyWindows(c, dur);
   const notes = [];
 
-  // THE CROSSING HAS TO FIT INSIDE THE CLIP, AND AT THE DEFAULT IT DID NOT.
-  // 17.5%/s is a 5.71s crossing. Entering at 2.0s of a 5s clip put the third
-  // wall's slot at 5.71s-7.61s - a window outside its own clip. That wall was
-  // being given an instruction it could not obey and no one was told, so it
-  // showed the element whenever it felt like it, which is exactly the "it
-  // repeats / it is on screen the whole time" report.
-  if (askedTotal > dur) {
-    fittedRate = round(100 / dur, 1);
-    perWall = dur / 3;
-    entry = 0;
-    notes.push('A ' + rate + '%/s crossing takes ' + askedTotal + 's, which does not fit a '
-             + dur + 's clip - the element would never reach the far wall. Paced to fit instead: '
-             + fittedRate + '%/s, entering at 0s.');
-  } else if (round(entry + askedTotal, 2) > dur) {
-    entry = round(dur - askedTotal, 2);
-    notes.push('Entry moved to ' + entry + 's so the whole crossing finishes inside the '
-             + dur + 's clip.');
+  // NOTHING MAY POINT OUTSIDE THE CLIP. A window running past the end is how the
+  // third wall used to be handed a slot from 5.71s to 7.61s of a five-second
+  // video - an instruction it could not obey, which it answered by showing the
+  // element whenever it felt like it.
+  function clampWin(key) {
+    const raw = wins[key] || {};
+    let a = Number(raw.enter), b = Number(raw.exit);
+    if (!Number.isFinite(a)) a = 0;
+    if (!Number.isFinite(b)) b = dur;
+    const oa = a, ob = b;
+    a = Math.min(Math.max(0, a), dur);
+    b = Math.min(Math.max(0, b), dur);
+    // Never a zero-length window. Clamping an exit back to the end of the clip
+    // can collapse it onto its own entry - a window of 0s, which divides by zero
+    // when the crossing speed is read off it - so pull the ENTRY back instead.
+    if (b <= a) {
+      a = Math.max(0, Math.min(a, dur - 1 / FPS));
+      b = Math.min(dur, a + 1 / FPS);
+    }
+    return { enter: round(a, 2), exit: round(b, 2), clamped: (oa !== a || ob !== b) };
   }
 
-  // AND IT HAS TO BE A PACE A CROSSING CAN ACTUALLY BE DRAWN AT. Measured on
-  // the delivered set of 2026-09-23: the contract asked for 0.95s per wall
-  // (35%/s) and every wall drew a crossing of roughly 3 seconds instead - the
-  // right wall let the owls in at 2.0s exactly as asked and still had them on
-  // screen at 5.0s. Below about 1.5s per wall the generator substitutes its own
-  // pacing, so say so rather than quietly asking for something that gets
-  // overruled. ~11%/s is what the delivered crossings actually ran at.
-  if (perWall < 1.5) {
-    notes.push('At ' + round(fittedRate || rate, 1) + '%/s each wall gets only ' + round(perWall, 2)
-             + 's. Every delivered crossing so far has been drawn at about 3s per wall (~11%/s) '
-             + 'whatever it was asked for, so expect this to be overruled. A three-wall crossing at '
-             + 'a believable pace needs roughly a ' + Math.ceil(3 * 3 + 1) + 's clip.');
+  const all = {};
+  for (const k of ['left', 'center', 'right']) all[k] = clampWin(k);
+  const mine = all[w];
+  // Report EVERY clamped wall, not just this one: the timeline shows all three,
+  // and a window silently moved on a wall you are not currently looking at is
+  // exactly the kind of thing that gets noticed only in the delivered clip.
+  const clamped = ['left', 'center', 'right'].filter(k => all[k].clamped);
+  if (clamped.length) {
+    notes.push('Outside the ' + dur + 's clip and clamped: '
+      + clamped.map(k => k.toUpperCase() + ' to ' + all[k].enter + '-' + all[k].exit + 's').join(', ')
+      + '. No window can point past the end of the clip.');
+  }
+
+  const onScreen = round(mine.exit - mine.enter, 2);
+
+  // SPEED IS A READING NOW, NOT A SETTING. The element crosses from clear of one
+  // edge to clear of the other in `onScreen` seconds, which is 1.24 frame widths
+  // of travel - the 0.12 overshoot at each end is where it is still out of shot.
+  const SPAN = 1.24;
+  const crossRate = round(SPAN / onScreen, 3);              // frame widths per second
+  const roomPctPerSec = round((100 / 3) / onScreen, 1);     // % of the whole room per second
+
+  // THE RELAY SHOULD CHAIN: each wall picks the element up where the last one
+  // dropped it. A gap means it is nowhere in the room for a moment; an overlap
+  // means it is on two walls at once. Both are allowed - the operator sets the
+  // times now - but neither should happen silently.
+  for (let i = 1; i < order.length; i++) {
+    const prev = all[order[i - 1]], next = all[order[i]];
+    const d = round(next.enter - prev.exit, 2);
+    if (d > 0.05) {
+      notes.push('Gap of ' + d + 's between ' + order[i - 1].toUpperCase() + ' letting go ('
+               + prev.exit + 's) and ' + order[i].toUpperCase() + ' picking it up (' + next.enter
+               + 's) - it is nowhere in the room for that moment.');
+    } else if (d < -0.05) {
+      notes.push('Overlap of ' + Math.abs(d) + 's between ' + order[i - 1].toUpperCase() + ' and '
+               + order[i].toUpperCase() + ' - it is on two walls at once.');
+    }
+  }
+
+  // AND IT HAS TO BE A PACE A CROSSING CAN ACTUALLY BE DRAWN AT. Measured on the
+  // delivered set of 2026-09-23: the contract asked for 0.95s per wall and every
+  // wall drew a crossing of roughly 3 seconds instead - the right wall let the
+  // owls in at 2.0s exactly as asked and still had them on screen at 5.0s.
+  if (onScreen < 1.5) {
+    notes.push(w.toUpperCase() + ' is on screen for only ' + onScreen + 's. Every delivered '
+             + 'crossing so far has been drawn at roughly 3s across a wall whatever it was asked '
+             + 'for, so a window this short is the one most likely to be overrun.');
   }
 
   const enterEdge = dir === 'right_to_left' ? 'RIGHT' : 'LEFT';
   const exitEdge = dir === 'right_to_left' ? 'LEFT' : 'RIGHT';
-  const inAt = round(entry + idx * perWall, 2);
-  const outAt = round(inAt + perWall, 2);
+  const inAt = mine.enter, outAt = mine.exit;
 
-  // HOW BIG IT IS. Nothing stated this, and the delivered set showed exactly
-  // what happens: the same prompt and the same reference picture produced small
-  // distant owls on the right wall, mid-sized ones on the centre, and on the
-  // left wall ONE bird in close-up filling half the frame. Size was never asked
-  // for, so each wall chose its own - and a travelling element only reads as one
-  // journey if it is the same size on all three.
+  // HOW BIG IT IS. Nothing stated this, and the delivered set showed exactly what
+  // happens: one prompt and one reference picture produced small distant owls on
+  // the right wall, mid-sized ones on the centre, and on the left wall a SINGLE
+  // bird in close-up filling half the frame.
   const askedSize = Number(c.sizePctOfHeight);
   const sizePct = (Number.isFinite(askedSize) && askedSize > 0) ? Math.min(90, askedSize) : 12;
 
-  // WHERE IT IS, SECOND BY SECOND. Entry and exit times alone were treated as
-  // loose cues: on the delivered set the right wall let them in at 2.0s as asked
-  // and then still had them on screen at 5.0s, having ignored a 2.95s exit
-  // entirely. The camera half of this contract is obeyed because it is given as
-  // a position at a time rather than a pair of cues, so the element gets the
-  // same treatment. x is the element's centre, 0 = left edge, 1 = right edge,
-  // and the values outside 0..1 are where it is still clear of the frame.
+  // AND HOW HIGH UP IT CROSSES. The same gap as size, and it showed the same
+  // way on the delivered set: the right wall's owls crossed up near the horizon
+  // and the left wall's sat low and enormous. An element that changes height
+  // between walls is three flights, not one - the audience is turning its head
+  // through a continuous line, so the line has to be at one height.
+  const askedY = Number(c.heightPctFromTop);
+  const heightPct = (Number.isFinite(askedY) && askedY > 0) ? Math.min(95, askedY) : 35;
+
+  // WHERE IT IS, SECOND BY SECOND. Entry and exit times on their own were read as
+  // loose cues and overrun every time. The camera half of this contract is obeyed
+  // because it is given as a position at a time, so the element gets the same. x
+  // is the element centre: 0 = left edge, 1 = right edge, and values outside
+  // 0..1 are where it is still clear of the frame.
   const xIn = enterEdge === 'RIGHT' ? 1.12 : -0.12;
   const xOut = exitEdge === 'RIGHT' ? 1.12 : -0.12;
   const xs = [];
   for (let k = 0; k <= 4; k++) {
     const f = k / 4;
-    xs.push([round(inAt + f * perWall, 2), round(xIn + f * (xOut - xIn), 2)]);
+    xs.push([round(inAt + f * onScreen, 2), round(xIn + f * (xOut - xIn), 2)]);
   }
 
+  const firstEnter = Math.min.apply(null, order.map(k => all[k].enter));
+  const lastExit = Math.max.apply(null, order.map(k => all[k].exit));
+
   return {
-    sizePctOfHeight: sizePct, xPath: xs,
+    sizePctOfHeight: sizePct, heightPctFromTop: heightPct, xPath: xs,
     subject: String(c.subject).trim(),
     count: elementCount(c.subject),
-    direction: dir, order: order, wall: wallKey(wallId), index: idx, lastIndex: 2,
-    ratePctPerSec: fittedRate || rate,
-    ratePctPerSecAsked: rate, ratePctPerSecFitted: fittedRate,
-    perWallSec: round(perWall, 2), totalSec: round(perWall * 3, 2),
-    entrySec: round(entry, 2), durationSec: dur, fps: FPS,
+    direction: dir, order: order, wall: w, index: idx, lastIndex: order.length - 1,
+    windows: all,
+    onScreenSec: onScreen, perWallSec: onScreen,
+    crossRateFrameWidthsPerSec: crossRate, roomPctPerSec: roomPctPerSec,
+    totalSec: round(lastExit - firstEnter, 2), firstEnter: firstEnter, lastExit: lastExit,
+    durationSec: dur, fps: FPS,
     enterEdge: enterEdge, exitEdge: exitEdge, inAt: inAt, outAt: outAt,
     inFrame: Math.round(inAt * FPS), outFrame: Math.round(outAt * FPS),
     lastFrame: Math.round(dur * FPS),
@@ -1233,11 +1372,17 @@ function cameraJson(moveId, wallId, durationSec, opts) {
   };
   for (const w of others) {
     const o = spec(sp.move, w, sp.durationSec, opts && opts.speedPct, opts && opts.centrePct);
-    const oz = Math.abs(o.scaleTotal - 1) >= zoomDeadzone(o.wall);
+    // The DELIVERED figures, not the ask. This block exists so three separate
+    // jobs cut together as one move, and what cuts together is what the finished
+    // clips actually do - the right wall's ask is deliberately the reverse of
+    // that (see DELIVERY_SIGN), and passing the reverse on here would tell the
+    // other two walls the rig splits in half.
+    const oz = Math.abs(o.scaleDelivered - 1) >= zoomDeadzone(o.wall);
     out.rig_context[w] = {
-      dx_total: o.dxTotal,
-      travel: o.towardEdge ? 'toward its ' + o.towardEdge + ' edge' : 'no sideways travel',
-      scale_end: oz ? round(o.scaleTotal, 3) : 1.0,
+      dx_total: o.dxDelivered,
+      travel: o.towardEdgeDelivered ? 'toward its ' + o.towardEdgeDelivered + ' edge'
+                                    : 'no sideways travel',
+      scale_end: oz ? round(o.scaleDelivered, 3) : 1.0,
     };
   }
   out.rig_context.your_wall = sp.wall;
@@ -1253,5 +1398,5 @@ module.exports = {
   cameraGloss,
   MOVES, REF_VIEW_PX, WALL_PX, WALL_H, FPS, SAFE_PX_PER_FRAME, BENCHMARK_DX_RATE,
   normalise, spec, posAt, posAtY, landmarkRows, numericBlock, inspector, presetIds, compare, paceMatch,
-  cameraJson, travelWord, anchorsFor, elementSchedule, elementCount,
+  cameraJson, travelWord, anchorsFor, elementSchedule, elementCount, DELIVERY_SIGN,
 };

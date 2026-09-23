@@ -416,18 +416,67 @@ function buildLockedJson(wallId, rig, extras) {
     base.travelling_element = {
       subject: el.subject,
 
+      // THE TWO TIMES ARE THE WHOLE POINT, so they lead. The operator types them
+      // per wall now; they are not derived from a pace box any more, and nothing
+      // in here may round them off. Frames as well as seconds, because a frame
+      // number is a thing you can be exactly right or exactly wrong about and
+      // "about 2 seconds" is not.
+      on_screen_exactly: 'Visible from ' + el.inAt + 's to ' + el.outAt + 's - frame '
+        + el.inFrame + ' to frame ' + el.outFrame + ' of ' + el.lastFrame + '. These two times are '
+        + 'fixed and are not a suggestion: frame ' + el.inFrame + ' is the FIRST frame any part of '
+        + 'it is visible, frame ' + el.outFrame + ' is the LAST. Do not start it early, do not let '
+        + 'it run on, do not ease it in or out.',
+      enters: { edge: el.enterEdge, at_second: el.inAt, at_frame: el.inFrame },
+      exits: { edge: el.exitEdge, at_second: el.outAt, at_frame: el.outFrame },
+      crossing_time: el.onScreenSec + 's from edge to edge. Pace it so it is exactly clear of the '
+        + el.exitEdge + ' edge at frame ' + el.outFrame + ' - not still leaving, not already long '
+        + 'gone.',
+
+      // WHERE IT IS, SECOND BY SECOND. Entry and exit times on their own were
+      // read as loose cues and overrun every time: on the delivered set of
+      // 2026-09-23 the right wall took its 2.0s entry exactly as asked and was
+      // still showing the owls at 5.0s against a 2.95s exit. The camera half of
+      // this contract is obeyed because it is given as a position at a time, so
+      // the element is now given the same.
+      x_path: el.xPath,
+      x_path_key: '[seconds, x of its centre]. 0 = left edge, 1 = right edge; outside 0..1 is clear '
+        + 'of frame. Hit these positions at these times - equal travel per equal slice of time, no '
+        + 'acceleration and no hold.',
+
+      not_in_frame: 'Frames 0-' + el.inFrame + ' (0-' + el.inAt + 's): completely absent - not '
+        + 'partly in frame, not a shadow, not a silhouette, not blurred behind anything, not '
+        + 'anywhere in the picture. Frames ' + el.outFrame + '-' + el.lastFrame + ' ('
+        + el.outAt + '-' + el.durationSec.toFixed(1) + 's): gone, frame empty of it. It appears '
+        + 'once, for ' + el.onScreenSec + 's, and at no other moment in this clip.',
+
       // COUNT AND SIZE, BOTH STATED. Neither used to be, and the delivered set
-      // of 2026-09-23 shows the cost: on one prompt and one reference picture
-      // the right wall drew 2-4 small distant owls, the centre 3-4 mid-sized
-      // ones, and the left wall a SINGLE bird in close-up filling half the
-      // frame. It reads as one journey only if it is the same thing at the same
-      // size on every wall.
+      // shows the cost: on one prompt and one reference picture the right wall
+      // drew 2-4 small distant owls, the centre 3-4 mid-sized ones, and the left
+      // wall a SINGLE bird in close-up filling half the frame.
       how_many: el.count != null
         ? 'Exactly ' + el.count + ', in every frame it appears and on all three walls.'
         : 'Exactly as many as the subject names - same number every frame, same number every wall.',
-      size_in_frame: el.sizePctOfHeight + '% of the frame height, the same on all three walls. It '
-        + 'crosses at a distance: never filling the frame, never cut off by the top or bottom edge, '
-        + 'never coming nearer as it crosses.',
+      size_in_frame: el.sizePctOfHeight + '% of the frame height, held at that size for the whole '
+        + 'crossing. It crosses at a distance: never filling the frame, never cut off by the top or '
+        + 'bottom edge, never coming nearer as it crosses.',
+      height_in_frame: 'Its centre stays at ' + el.heightPctFromTop + '% of the frame height down '
+        + 'from the top edge, level for the whole crossing - no rising, no dipping, no arc.',
+
+      // THE ANIMATION IS THE SAME ON ALL THREE WALLS; ONLY THE TWO TIMES DIFFER.
+      // Delivered 2026-09-23: the left wall drew one enormous owl low in frame,
+      // the right wall a handful of small ones up near the horizon, and the two
+      // read as different creatures on different journeys. Each wall is a
+      // separate job that cannot see the others, so the invariants have to be
+      // stated as absolutes rather than as "match the other walls" - there is no
+      // other wall in front of it to match.
+      same_on_every_wall: 'These are fixed values, identical in all three jobs, and none of them is '
+        + 'yours to choose: the design and markings, the count, the size (' + el.sizePctOfHeight
+        + '% of frame height), the height in frame (' + el.heightPctFromTop + '% from the top), the '
+        + 'direction (' + el.enterEdge + ' to ' + el.exitEdge + '), a constant speed, and the same '
+        + 'wing rhythm and body attitude throughout. Draw it exactly to these numbers.',
+      only_difference: 'The ONLY thing that differs between the three walls is when it is on screen. '
+        + 'On this wall that is ' + el.inAt + 's to ' + el.outAt + 's (frame ' + el.inFrame + ' to '
+        + el.outFrame + ') and nothing else changes.',
 
       reference_image: el.refPath
         ? 'One attached image is this element alone. Copy its design, markings, colour and '
@@ -435,36 +484,19 @@ function buildLockedJson(wallId, rig, extras) {
           + 'and do NOT copy its framing or scale - that picture is a close-up, this is not.'
         : 'No picture supplied - take the design from the description, identical on every wall.',
 
-      enters: { edge: el.enterEdge, at_second: el.inAt, at_frame: el.inFrame },
-      exits: { edge: el.exitEdge, at_second: el.outAt, at_frame: el.outFrame },
-
-      // WHERE IT IS, SECOND BY SECOND. Entry and exit times on their own were
-      // read as loose cues and overrun every time: the right wall took its 2.0s
-      // entry as asked and was still showing them at 5.0s against a 2.95s exit.
-      // The camera half of this contract is obeyed because it is given as a
-      // position at a time, so the element now gets the same.
-      x_path: el.xPath,
-      x_path_key: '[seconds, x of its centre]. 0 = left edge, 1 = right edge; outside 0..1 is clear '
-        + 'of frame. Hit these positions at these times - equal travel per equal time.',
-
-      not_in_frame: 'Shown ONCE, for ' + el.perWallSec + 's. Frames 0-' + el.inFrame + ' (0-'
-        + el.inAt + 's): completely absent - not partly in frame, not a shadow, not blurred behind '
-        + 'anything. Frames ' + el.outFrame + '-' + el.lastFrame + ' (' + el.outAt + '-'
-        + el.durationSec.toFixed(1) + 's): gone, frame empty of it. No second appearance, no '
-        + 'lingering past the exit.',
-
       continuity: (el.index > 0
-            ? 'Already mid-flight on arrival: enters cut off by the ' + el.enterEdge + ' edge. ' : '')
+            ? 'Already mid-flight on arrival: at frame ' + el.inFrame + ' it is entering cut off by '
+              + 'the ' + el.enterEdge + ' edge, never from a standstill. ' : '')
         + (el.index < el.lastIndex
-            ? 'Carries on past this wall: leaves cut off by the ' + el.exitEdge + ' edge. ' : '')
+            ? 'Carries on past this wall: at frame ' + el.outFrame + ' it is leaving cut off by the '
+              + el.exitEdge + ' edge, never stopping, never fading out. ' : '')
         + 'Constant speed, height and SIZE across the frame - no pause, no hover, no reversing, no '
         + 'loop, no growing or shrinking.'
         + (many ? ' Formation and spacing hold, and the count never changes: ' + el.count + ' in, '
                 + el.count + ' out.' : ''),
 
       independent_of_camera: 'The ONLY thing allowed to move on its own, and it is one leg of a '
-        + 'single flight across all three walls (' + el.totalSec + 's end to end). Everything else '
-        + 'obeys the camera block.',
+        + 'single flight across all three walls. Everything else obeys the camera block.',
     };
     if (el.notes && el.notes.length) base.travelling_element.pacing_note = el.notes.join(' ');
   }

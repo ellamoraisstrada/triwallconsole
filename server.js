@@ -1744,7 +1744,16 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       const applied = LEARN.applyCalibration(state.calibration, state.rig || RIG.defaultRig());
       const moveId = RIGSPEC.normalise(applied.intent);
       const sp = RIGSPEC.spec(moveId, wall, applied.durationSec || 5);
-      if (Math.abs(sp.dxTotal) < 0.01 && Math.abs(sp.scaleTotal - 1) < 0.01) {
+      // THE END FRAME IS BUILT FROM THE ROOM'S FIGURES, NOT FROM THE ASK.
+      // On the right wall the contract deliberately asks for the reverse of what
+      // the room wants, because the generator reverses it (see DELIVERY_SIGN in
+      // rigspec.js). Nothing reverses an end frame: it is a real image warped by
+      // a real amount and handed over as an interpolation target. Feeding it the
+      // inverted ask would warp the plate backwards and break the one lever that
+      // does not argue back.
+      const lockDx = sp.dxDelivered;
+      const lockScaleRaw = sp.scaleDelivered;
+      if (Math.abs(lockDx) < 0.01 && Math.abs(lockScaleRaw - 1) < 0.01) {
         return sendJson(res, 400, { error:
           moveId + ' does not move this wall, so there is no end frame to build.' });
       }
@@ -1755,7 +1764,7 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       // 1.00, 1.00, 1.00, 0.95, 0.50, 0.49, 0.30 across the clip. A start/end
       // pair is a strong lever for a TRANSLATION and a bad one for a dolly,
       // where the in-between is the whole shot.
-      if (Math.abs(sp.dxTotal) < 0.05 && !body.force) {
+      if (Math.abs(lockDx) < 0.05 && !body.force) {
         return sendJson(res, 400, { error:
           'This move is a dolly on the ' + wall + ' wall, not a slide, and locking a dolly to a '
           + 'start/end pair made it hold the first frame and jump to the last. Leave this wall '
@@ -1773,14 +1782,14 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       // residual under 15% is reported as scale_end 1.0 in the JSON (and the
       // negatives then say "No zoom"), so warping the end frame by 0.91 would
       // hand the generator a target its own instructions forbid.
-      const lockScale = Math.abs(sp.scaleTotal - 1) >= 0.15 ? sp.scaleTotal : 1.0;
+      const lockScale = Math.abs(lockScaleRaw - 1) >= 0.15 ? lockScaleRaw : 1.0;
 
       const out = path.join(UPLOADS_DIR, wall + '-endframe-' + Date.now() + '.png');
       let info;
       try {
         const raw = await new Promise((resolve, reject) => {
           const child = spawn(PYTHON_BIN, [path.join(APP_DIR, 'make_end_frame.py'), src, out,
-                                           '--dx', String(sp.dxTotal), '--scale', String(lockScale)],
+                                           '--dx', String(lockDx), '--scale', String(lockScale)],
                               { stdio: ['ignore', 'pipe', 'pipe'] });
           let o = '', e = '';
           child.stdout.on('data', d => o += d);
@@ -1800,7 +1809,7 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
         ok: true, move: moveId, wall: wall,
         startFrame: '/uploads/' + path.basename(src),
         endFrame: '/uploads/' + path.basename(out),
-        dxTotal: sp.dxTotal, scaleTotal: lockScale,
+        dxTotal: lockDx, scaleTotal: lockScale,
         revealedBandPx: info.revealed_band_px, revealedAt: info.revealed_at,
         note: 'The revealed band is a streak of the edge colours, not invented content - it carries '
             + 'the floor line, skirting and horizon at their true heights and leaves the detail to '
