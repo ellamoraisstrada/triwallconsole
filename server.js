@@ -164,6 +164,16 @@ function defaultState() {
     decoded: null,                    // last motion_probe result, for display
     history: LEARN.emptyHistory(),
     calibration: LEARN.emptyCalibration(),
+    // THE IMAGE SETS SHELF. A set is one finished (or half-finished) trio of
+    // wall pictures plus the text that made them. Before this, there was one
+    // live trio and a new centre reference destroyed it, so building a second
+    // look while the first one rendered was impossible - which is exactly what
+    // the operator does: several image sets accumulate in the time one video
+    // takes. Only IMAGE state is captured; video results stay on the live
+    // walls, because a clip belongs to the job that is rendering it, not to
+    // whichever set happens to be on the walls when it lands.
+    imageSets: [],
+    liveSetId: null,
     walls,
   };
 }
@@ -181,6 +191,8 @@ if (fs.existsSync(STATE_FILE)) {
     merged.rig.element = Object.assign(RIG.defaultRig().element, (saved.rig || {}).element || {});
     merged.calibration = Object.assign(LEARN.emptyCalibration(), saved.calibration || {});
     merged.history = Object.assign(LEARN.emptyHistory(), saved.history || {});
+    merged.imageSets = Array.isArray(saved.imageSets) ? saved.imageSets : [];
+    merged.liveSetId = saved.liveSetId || null;
     // Object.assign only merges TOP-LEVEL keys — `walls` is itself one such
     // key, so a saved `walls` object (written before some newer per-wall
     // field, e.g. editPrompt or startFramePath, existed) would otherwise
@@ -322,6 +334,110 @@ function invalidateSidesForNewCentre(){
   state.rig.gradeRef = null;
   state.rig.gradeRefFrom = null;
   state.rig.gradeRefHorizon = null;
+}
+
+
+// ============================ THE IMAGE SETS SHELF ==========================
+//
+// WHY THIS EXISTS. A new centre reference used to call
+// invalidateSceneForNewCentre() and the previous trio was simply gone - its
+// prompts blanked, its approvals dropped. That made the tool single-track:
+// you could not start the next look until the current one had been through
+// video, even though video is the slow part and images are the fast part.
+// The operator's actual pace is several image sets per clip.
+//
+// WHAT A SET HOLDS. Image state only - the per-wall picture pointers and the
+// text that produced them - plus the scene description they were written
+// against. Deliberately NOT video: a clip belongs to the job that is
+// rendering it, and that job writes back to state.walls when it lands (see
+// pollJobInBackground), so binding clips to sets would mean a result arriving
+// against whichever set happened to be on the walls at the time.
+//
+// NOTHING IS COPIED. uploadedImagePath/approvedImagePath point into uploads/,
+// and nothing in this tool ever deletes from uploads/ (see /api/reset's own
+// note), so a set's pointers stay valid for as long as the folder does.
+const SET_FIELDS = ['imagePrompt', 'uploadedImagePath', 'approvedImagePath',
+                    'genImageUrl', 'genImageStatus'];
+const IMAGE_SETS_MAX = 40;
+
+function liveSetHasContent(){
+  return WALL_IDS.some(w => {
+    const x = state.walls[w];
+    return !!(x.uploadedImagePath || x.approvedImagePath || x.genImageUrl
+              || (x.imagePrompt || '').trim());
+  });
+}
+
+function snapshotLiveWalls(){
+  const walls = {};
+  WALL_IDS.forEach(w => {
+    walls[w] = {};
+    SET_FIELDS.forEach(f => { walls[w][f] = state.walls[w][f]; });
+  });
+  return walls;
+}
+
+function nextSetName(){
+  let n = state.imageSets.length + 1;
+  const taken = new Set(state.imageSets.map(x => x.name));
+  while (taken.has('Set ' + n)) n++;
+  return 'Set ' + n;
+}
+
+// Called before ANY transition that would otherwise destroy the live trio:
+// a new centre reference, loading another set, or a reset. Updates the set
+// the walls came from if there is one (an autosave, so repeatedly tweaking
+// one set does not litter the shelf with copies), otherwise files the trio
+// as a new set. Returns the set it wrote to, or null if there was nothing
+// worth keeping.
+function archiveLiveSet(reason){
+  if (!Array.isArray(state.imageSets)) state.imageSets = [];
+  if (!liveSetHasContent()) return null;
+  const walls = snapshotLiveWalls();
+  const existing = state.liveSetId
+    && state.imageSets.find(x => x.id === state.liveSetId);
+  if (existing) {
+    existing.walls = walls;
+    existing.scene = state.scene;
+    existing.centreRefHash = state.centreRefHash;
+    existing.updatedAt = Date.now();
+    return existing;
+  }
+  const entry = {
+    id: 'set-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+    name: nextSetName(),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    reason: reason || 'archived',
+    scene: state.scene,
+    centreRefHash: state.centreRefHash,
+    imageModel: state.imageModel,
+    walls,
+  };
+  state.imageSets.unshift(entry);           // newest first, like the library
+  if (state.imageSets.length > IMAGE_SETS_MAX) state.imageSets.length = IMAGE_SETS_MAX;
+  return entry;
+}
+
+// Puts a saved set back on the walls. Image fields only - anything the set
+// does not carry (video results, start/end frames) is left exactly as it is,
+// because it belongs to the rendering job rather than to the picture.
+function loadImageSet(id){
+  const set = (state.imageSets || []).find(x => x.id === id);
+  if (!set) return null;
+  archiveLiveSet('switching sets');
+  WALL_IDS.forEach(w => {
+    const src = (set.walls || {})[w] || {};
+    SET_FIELDS.forEach(f => { state.walls[w][f] = src[f] === undefined ? null : src[f]; });
+    if (state.walls[w].imagePrompt == null) state.walls[w].imagePrompt = '';
+  });
+  state.scene = set.scene || '';
+  // The centre hash has to travel with the set, or the very next upload of
+  // this set's own centre picture would read as "the centre changed" and
+  // invalidate the trio that was just restored.
+  state.centreRefHash = set.centreRefHash || null;
+  state.liveSetId = set.id;
+  return set;
 }
 
 // An UPLOADED centre replaces the picture outright, so the centre's own stale
@@ -1004,17 +1120,27 @@ const server = http.createServer(async (req, res) => {
       const dest = path.join(UPLOADS_DIR, safeName);
       fs.writeFileSync(dest, Buffer.from(dataBase64, 'base64'));
       let clearedScene = false;
+      let archived = null;
       if (wall === 'center' && targetField === 'uploadedImagePath') {
         // Order matters: invalidate FIRST (it clears the stale approved centre
         // that would otherwise out-rank this upload), then record the new file.
-        if (centreReferenceChanged(dest)) { invalidateSceneForNewCentre(); clearedScene = true; }
+        if (centreReferenceChanged(dest)) {
+          // Shelve the outgoing trio before wiping it. This is the difference
+          // between "a new centre starts a new look" and "a new centre throws
+          // the last one away", which is what it used to do.
+          archived = archiveLiveSet('replaced by a new centre');
+          invalidateSceneForNewCentre();
+          state.liveSetId = null;
+          clearedScene = true;
+        }
       }
       state.walls[wall][targetField] = dest;
       saveState();
       if (wall === 'center' && targetField === 'uploadedImagePath') {
         refreshCentreGradeRef().catch(() => {});
       }
-      return sendJson(res, 200, { path: dest, url: `/uploads/${safeName}`, clearedScene });
+      return sendJson(res, 200, { path: dest, url: `/uploads/${safeName}`, clearedScene,
+                                  archivedSet: archived ? { id: archived.id, name: archived.name } : null });
     }
 
     // ---- generation (image or video, any model the CLI reports) ----
@@ -1634,6 +1760,74 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       return sendJson(res, 200, { ok: true, rig: state.rig });
     }
 
+    // ---- the image sets shelf ----
+    if (req.method === 'GET' && p === '/api/image-sets') {
+      return sendJson(res, 200, { sets: state.imageSets || [], liveSetId: state.liveSetId || null,
+                                  max: IMAGE_SETS_MAX });
+    }
+
+    // Save the trio currently on the walls. With no live set this files a new
+    // one; with a live set it updates it in place, so pressing Save twice does
+    // not produce two near-identical rows.
+    if (req.method === 'POST' && p === '/api/image-set-save') {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      if (!liveSetHasContent()) {
+        return sendJson(res, 400, { error: 'Nothing to save yet - no picture or description on any wall.' });
+      }
+      const entry = archiveLiveSet('saved by hand');
+      if (body.name && String(body.name).trim()) entry.name = String(body.name).trim().slice(0, 80);
+      state.liveSetId = entry.id;
+      saveState();
+      return sendJson(res, 200, { set: entry, liveSetId: state.liveSetId });
+    }
+
+    // Start a fresh trio WITHOUT destroying the current one.
+    if (req.method === 'POST' && p === '/api/image-set-new') {
+      const archived = archiveLiveSet('starting a new set');
+      invalidateSceneForNewCentre();
+      // invalidateSceneForNewCentre does NOT clear the centre's own
+      // uploadedImagePath - its only other caller overwrites that field on the
+      // very next line, so it never had to. Here nothing replaces it, and
+      // leaving it behind meant the walls still looked occupied: the next
+      // archiveLiveSet() saw content and filed a junk set. Clear it here.
+      state.walls.center.uploadedImagePath = null;
+      state.scene = '';
+      state.centreRefHash = null;
+      state.liveSetId = null;
+      saveState();
+      return sendJson(res, 200, { ok: true,
+        archivedSet: archived ? { id: archived.id, name: archived.name } : null });
+    }
+
+    if (req.method === 'POST' && p === '/api/image-set-load') {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const set = loadImageSet(body.id);
+      if (!set) return sendJson(res, 404, { error: 'No such set.' });
+      saveState();
+      return sendJson(res, 200, { set, liveSetId: state.liveSetId });
+    }
+
+    if (req.method === 'POST' && p === '/api/image-set-rename') {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const set = (state.imageSets || []).find(x => x.id === body.id);
+      if (!set) return sendJson(res, 404, { error: 'No such set.' });
+      set.name = String(body.name || '').trim().slice(0, 80) || set.name;
+      saveState();
+      return sendJson(res, 200, { set });
+    }
+
+    // Drops the row only. The pictures stay in uploads/ - nothing in this tool
+    // deletes from there - so a set removed by accident has lost its grouping
+    // and its text, not its images.
+    if (req.method === 'POST' && p === '/api/image-set-delete') {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const before = (state.imageSets || []).length;
+      state.imageSets = (state.imageSets || []).filter(x => x.id !== body.id);
+      if (state.liveSetId === body.id) state.liveSetId = null;
+      saveState();
+      return sendJson(res, 200, { ok: true, removed: before - state.imageSets.length });
+    }
+
     if (req.method === 'GET' && p === '/api/library') {
       return sendJson(res, 200, { library: state.library || [], max: LIBRARY_MAX });
     }
@@ -1934,9 +2128,15 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       // reference hash and the measured grade lock.
       const keptHistory = state.history;
       const keptCalibration = state.calibration;
+      // The shelf survives too, for the same reason the rating history does:
+      // saved sets are accumulated work, not part of "this picture". A reset
+      // that emptied the shelf would make it useless as a place to put things.
+      archiveLiveSet('before reset');
+      const keptSets = state.imageSets;
       state = defaultState();
       state.history = keptHistory;
       state.calibration = keptCalibration;
+      state.imageSets = keptSets;
       state.centreRefHash = null;
       saveState();
       return sendJson(res, 200, { ok: true });
@@ -1974,17 +2174,21 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       const dest = path.join(UPLOADS_DIR, `${wall}-approved-${Date.now()}${ext}`);
       await downloadFile(url, dest);
       let clearedScene = false;
+      let archived = null;
       if (wall === 'center' && centreReferenceChanged(dest)) {
         // Approving a NEW centre generation retires the previous picture's
         // sides, for the same reason an upload does — but the centre's own
         // description is what produced this image, so it stays.
+        archived = archiveLiveSet('replaced by a new centre');
         invalidateSidesForNewCentre();
+        state.liveSetId = null;
         clearedScene = true;
       }
       state.walls[wall].approvedImagePath = dest;
       saveState();
       if (wall === 'center') { refreshCentreGradeRef().catch(() => {}); }
-      return sendJson(res, 200, { path: dest, clearedScene });
+      return sendJson(res, 200, { path: dest, clearedScene,
+                                  archivedSet: archived ? { id: archived.id, name: archived.name } : null });
     }
 
     // ---- Refine image: small, targeted remove/add-one-thing edits ----
