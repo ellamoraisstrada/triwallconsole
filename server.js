@@ -756,10 +756,37 @@ function cliPromptArg(prompt) {
 // itself signed in. That happened on a real account switch and looked exactly
 // like a broken login. When the account has exactly one workspace there is
 // nothing to choose, so it is chosen here.
-let hfLogin = null;
+//
+// EVERY CLICK STARTS A FRESH ATTEMPT. A second Sign in used to hand back the
+// attempt already pending - no new tab, and the button then waited out the
+// CLI's own five-minute timeout. That happened: one attempt's tab stalled on
+// Higgsfield's own sign-in page, the retry silently re-joined it, and the
+// operator watched "Waiting for browser" until "Authorization timed out". A
+// stuck attempt is not something anyone can finish, so a retry replaces it.
+//
+// THE LINK THE CLI PRINTS IS A LOCAL FILE, not the authorize URL:
+//   If browser does not open, open this file in your browser: file:///C:/...
+//   /higgsfield-auth-XXXX/sign-in.html
+// That file is a meta-refresh to the real https authorize URL. The page cannot
+// link to a file:// path, so the https URL is read out of it and offered
+// instead - which is also what can be pasted into a private window when the
+// normal one is stuck on a stale Higgsfield session.
+let hfLogin = null, hfLoginChild = null;
+
+function authorizeUrlFromCliOutput(buf) {
+  const https = buf.match(/https:\/\/[^\s"']+/);
+  if (https) return https[0];
+  const file = buf.match(/file:\/\/\/?([^\s"']+sign-in\.html)/i);
+  if (!file) return null;
+  try {
+    const html = fs.readFileSync(decodeURIComponent(file[1]), 'utf8');
+    const m = html.match(/url=(https:\/\/[^"'>\s]+)/i) || html.match(/href="(https:\/\/[^"]+)"/i);
+    return m ? m[1].replace(/&amp;/g, '&') : null;
+  } catch (e) { return null; }
+}
 
 function beginHiggsfieldLogin() {
-  if (hfLogin && hfLogin.status === 'pending') return hfLogin;
+  if (hfLoginChild) { try { hfLoginChild.kill(); } catch (e) {} hfLoginChild = null; }
   hfLogin = { status: 'pending', url: null, message: 'Starting sign-in…',
               account: null, workspace: null, startedAt: Date.now() };
   const me = hfLogin;
@@ -767,12 +794,13 @@ function beginHiggsfieldLogin() {
 
   const child = spawn(HIGGSFIELD_BIN, ['auth', 'login'],
                       { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  hfLoginChild = child;
   const scan = (chunk) => {
     buf += String(chunk);
     if (!me.url) {
-      const m = buf.match(/https:\/\/[^\s"']+/);
-      if (m) {
-        me.url = m[0];
+      const u = authorizeUrlFromCliOutput(buf);
+      if (u) {
+        me.url = u;
         me.message = 'Browser opened — approve the sign-in there.';
       }
     }
@@ -784,6 +812,8 @@ function beginHiggsfieldLogin() {
     me.message = 'Could not start the Higgsfield CLI: ' + e.message;
   });
   child.on('close', async (code) => {
+    if (hfLoginChild === child) hfLoginChild = null;
+    if (me !== hfLogin) return;              // replaced by a newer attempt
     if (me.status === 'error') return;
     if (code !== 0) {
       me.status = 'error';

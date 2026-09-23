@@ -2841,8 +2841,12 @@ Run this yourself in a terminal:
   }
   const login = e.target.closest('[data-login]');
   if (!login) return;
+  // Each click is a new attempt (the server replaces any pending one), so an
+  // older click's wait loop must stand down rather than report on it.
+  const attempt = ++hfLoginAttempt;
+  if (!login.dataset.label) login.dataset.label = login.textContent;
+  const wasLabel = login.dataset.label;
   login.disabled = true;
-  const wasLabel = login.textContent;
   try {
     const r = await api('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ which: login.dataset.login }) });
@@ -2851,12 +2855,38 @@ Run this yourself in a terminal:
     // operator to go and read a terminal window. Claude still needs one — it is
     // an interactive REPL — so that path keeps the old message.
     if (r.inBrowser) {
-      login.textContent = 'Waiting for browser…';
+      // Stays clickable: a click now restarts a stuck sign-in instead of
+      // leaving the operator to wait out the CLI's five-minute timeout.
+      login.disabled = false;
+      login.textContent = 'Waiting for browser… (click to restart)';
+      // The way out when the tab did not open, or Higgsfield's own page stalls
+      // (it has - on a stale session after a website sign-out): the real link,
+      // shown as soon as the CLI has produced it, to open in a private window.
+      // Clicking Sign in again also works now - it replaces the stuck attempt.
+      let help = document.getElementById('hfLoginHelp');
+      if (!help) {
+        help = document.createElement('div');
+        help.id = 'hfLoginHelp';
+        help.className = 'statusline';
+        help.style.marginTop = '6px';
+        login.insertAdjacentElement('afterend', help);
+      }
+      help.textContent = 'Opening Higgsfield in your browser…';
+      delete help.dataset.url;
       const started = Date.now();
       for (;;) {
         await new Promise(done => setTimeout(done, 1500));
+        if (attempt !== hfLoginAttempt) return;          // a newer click took over
         let st;
         try { st = await api('/api/auth/login-status'); } catch (e) { break; }
+        if (attempt !== hfLoginAttempt) return;
+        if (st.url && help.dataset.url !== st.url) {
+          help.dataset.url = st.url;
+          help.innerHTML = 'Approve the sign-in in the tab that opened. Tab missing, or the Higgsfield page '
+            + 'stuck loading? <a href="' + st.url.replace(/"/g, '&quot;') + '" target="_blank" rel="noreferrer">Open '
+            + 'the sign-in page</a> — or copy that link into a private/incognito window.';
+        }
+        if (st.status !== 'pending') { help.remove(); }
         if (st.status === 'ok') {
           alert(st.note + (st.workspace ? '\nWorkspace: ' + st.workspace : ''));
           break;
@@ -2879,8 +2909,11 @@ Run this yourself in a terminal:
     alert(err.serverDown
       ? err.message
       : `Could not open a terminal automatically (${err.message}).\n\nRun this yourself:\n\n  ${cmd}`);
-  } finally { login.disabled = false; login.textContent = wasLabel; }
+  } finally {
+    if (attempt === hfLoginAttempt) { login.disabled = false; login.textContent = wasLabel; }
+  }
 });
+let hfLoginAttempt = 0;
 
 // ================= CAMERA RIG =================
 // The locked video rules are now DERIVED server-side from one rig intent (see
