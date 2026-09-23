@@ -639,8 +639,15 @@ table.rsr .rsr-n { color: var(--muted-dim); white-space: nowrap; }
     <div class="result" id="genjutsuResult"></div>
   </div>
 
+  <div class="section-head" id="vidRefineHead">
+    <h2><span class="stepno">6</span>Refinement <span class="sub">remove or add one small thing in a finished clip, in place</span> <button class="collapse" data-collapse="vidRefineBody">show</button></h2>
+    <select id="videoEditModelSelect"></select>
+  </div>
+  <div class="statusline" id="vidRefineHint">Clip almost right, but one object needs to go or come in? Describe just that one change and apply it — the result replaces this wall's current clip. The clip before the edit is kept in version history.</div>
+  <div id="vidRefineBody" class="collapsible" style="margin-bottom:30px;"><div class="cols3" id="vidRefineWalls"></div></div>
+
   <div class="section-head" id="calHead">
-    <h2><span class="stepno">6</span>Self-calibration <span class="sub">measures what it made, re-derives its numbers every 10 generations</span> <button class="collapse" data-collapse="calBody">show</button></h2>
+    <h2><span class="stepno">7</span>Self-calibration <span class="sub">measures what it made, re-derives its numbers every 10 generations</span> <button class="collapse" data-collapse="calBody">show</button></h2>
     <label style="display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;color:var(--muted);">
       <input type="checkbox" id="calEnabled" checked style="width:auto;accent-color:var(--accent);">
       Auto-calibrate
@@ -828,10 +835,16 @@ async function refreshFromState(){
     // generation (see /api/edit-image) — reflect the same outcome here too.
     restoreGenState('refine', w.id, st.genImageStatus, st.genImageUrl);
     updateRefineGenerateEnabled(w.id);
+    // The video Refinement card reflects genVideoUrl/genVideoStatus the same way.
+    const vrp = document.getElementById(`vidrefineprompt-${w.id}`);
+    if (vrp && !vrp.dataset.userEdited) vrp.value = st.videoEditPrompt || '';
+    restoreGenState('vidrefine', w.id, st.genVideoStatus, st.genVideoUrl);
+    refreshVidRefinePreview(w.id);
   });
   if (state.imageModel) document.getElementById('imageModelSelect').value = state.imageModel;
   if (state.videoModel) document.getElementById('videoModelSelect').value = state.videoModel;
   if (state.editModel) document.getElementById('editModelSelect').value = state.editModel;
+  if (state.videoEditModel) document.getElementById('videoEditModelSelect').value = state.videoEditModel;
   // videoMotionMode is still read from state so nothing
   // that depended on them breaks, but the camera rig (see the CAMERA RIG
   // section) is now what actually drives the locked video rules.
@@ -1012,6 +1025,57 @@ function buildWallCard(kind, w){
       </div>
     </div>
   `;
+}
+
+// The video Refinement card: the image one's layout, acting on this wall's
+// finished clip (genVideoUrl) instead of its still. No Approve - a clip has no
+// approval step; the edit replaces the wall's clip directly, and the one it
+// replaced is snapshotted into version history first (see /api/edit-video).
+function buildVidRefineCard(w){
+  return `
+    <div class="wallcard${w.id === 'center' ? ' center' : ''}">
+      <div class="wallcard-head"><span class="name">${w.label}</span><span class="angle">${w.angle}</span></div>
+      <div class="wallcard-body">
+        <div class="dropzone" id="vidrefinepreview-${w.id}" style="cursor:default;">
+          <div class="dz-content" id="vidrefinepreviewcontent-${w.id}"><span>Generate this wall's video above first</span></div>
+        </div>
+        <div class="prompt-tag">🔒 Fixed rule <span>— locked; change only by asking Claude</span></div>
+        <pre class="fixed-rules" id="vidrefinefixed-${w.id}"></pre>
+        <div class="prompt-tag">What to change <span>— the one thing to remove or add, fully editable</span></div>
+        <textarea class="wallprompt" id="vidrefineprompt-${w.id}" placeholder="e.g. 'Remove the red sled leaning against the fence' — leave blank and click Improve to have Claude suggest one small change."></textarea>
+        <div class="fields" id="vidrefinefields-${w.id}"></div>
+        <div class="actions">
+          <button class="btn ghost small" id="vidrefineimprove-${w.id}" title="Claude reads a frame of this wall's current clip and tightens the one-change edit instruction.">Tighten edit instruction</button>
+          <button class="btn small" id="vidrefinegen-${w.id}" disabled>Apply edit</button>
+        </div>
+        <div class="ratingrow">
+          <span class="pill idle" id="vidrefinepill-${w.id}">idle</span>
+          <span class="rate" id="vidrefinerate-${w.id}">
+            <button class="ratebtn" data-rate="up" data-rwall="${w.id}" data-rkind="vidrefine">&#9650; Like</button>
+            <button class="ratebtn" data-rate="down" data-rwall="${w.id}" data-rkind="vidrefine">&#9660; Unlike</button>
+          </span>
+        </div>
+        <div class="statusline" id="vidrefinestatus-${w.id}"></div>
+      </div>
+    </div>
+  `;
+}
+
+function refreshVidRefinePreview(id){
+  const el = document.getElementById(`vidrefinepreviewcontent-${id}`);
+  if (!el) return;
+  const url = state && state.walls[id] && state.walls[id].genVideoUrl;
+  el.innerHTML = url ? `<video controls muted preload="metadata" src="${url}"></video>` : `<span>Generate this wall's video above first</span>`;
+  updateVidRefineGenerateEnabled(id);
+}
+
+// Same rule as Apply edit on the image card: needs a clip AND an instruction.
+function updateVidRefineGenerateEnabled(id){
+  const btn = document.getElementById(`vidrefinegen-${id}`);
+  if (!btn) return;
+  const hasClip = !!(state && state.walls[id] && state.walls[id].genVideoUrl);
+  const hasText = (document.getElementById(`vidrefineprompt-${id}`)?.value || '').trim().length > 0;
+  btn.disabled = !(hasClip && hasText);
 }
 
 // The "Refine image" card is intentionally simpler than buildWallCard: no
@@ -1351,11 +1415,23 @@ function fullEditPrompt(editableText){
   return extra ? `${fixed}\n\n${extra}` : fixed;
 }
 
+// The video counterpart. It keeps the clip's MOTION as well as its content,
+// and says so in picture words (README section 4): the picture must keep
+// travelling and changing size exactly as it already does. An edit that
+// re-times the move breaks the set it has to cut together with.
+const VIDEO_EDIT_LOCK_NOTE = 'This is a small, targeted edit to an existing video clip — not a new clip and not a restyle. Change ONLY what the instruction below describes, and keep that change consistent on every frame. Leave everything else exactly as it already is: the same framing on every frame, the same length and timing, and the picture travels and changes size exactly as it already does, at the same pace from the first frame to the last. Keep the lighting, color palette, time of day, and every object not explicitly mentioned. Do not regenerate, restyle, or reinterpret the rest of the clip.';
+function fullVideoEditPrompt(editableText){
+  const extra = (editableText || '').trim();
+  return extra ? `${VIDEO_EDIT_LOCK_NOTE}\n\n${extra}` : VIDEO_EDIT_LOCK_NOTE;
+}
+
 document.getElementById('imageWalls').innerHTML = IMAGE_WALLS.map(w => buildWallCard('img', w)).join('');
 document.getElementById('videoWalls').innerHTML = WALLS.map(w => buildWallCard('vid', w)).join('');
 document.getElementById('refineWalls').innerHTML = WALLS.map(w => buildRefineCard(w)).join('');
+document.getElementById('vidRefineWalls').innerHTML = WALLS.map(w => buildVidRefineCard(w)).join('');
 // Refine's fixed rule is static — set once here, not in refreshFromState.
 WALLS.forEach(w => { document.getElementById(`refinefixed-${w.id}`).textContent = buildFixedEditRules(); });
+WALLS.forEach(w => { document.getElementById(`vidrefinefixed-${w.id}`).textContent = VIDEO_EDIT_LOCK_NOTE; });
 // Image and video fixed rules DO depend on imageCompositionMode/
 // videoMotionMode, which aren't known until refreshFromState() reads them
 // back from the server — this initial render uses the defaults ('distinct'/
@@ -1422,7 +1498,7 @@ function resyncLinkedFields(kind){
 document.addEventListener('change', (e) => {
   const id = e.target && e.target.id;
   if (!id) return;
-  const m = /^(img|vid|refine)field-(left|center|right)-(.+)$/.exec(id);
+  const m = /^(img|vid|refine|vidrefine)field-(left|center|right)-(.+)$/.exec(id);
   if (!m || !settingsLinked(m[1])) return;
   syncSharedParam(m[1], m[3], fieldValueOf(e.target));
 });
@@ -1493,16 +1569,19 @@ async function renderFieldsFor(kind, id, jst){
     // Same reasoning applies to 'refine' — an edit should keep the wall's
     // image at the video wall's 16:9 frame, not let the edit model reset it
     // to its own square/portrait default.
-    // Per-wall aspect, from the room ledger. Forcing 16:9 (1.78) on every wall
-    // was wrong for all of them: the side walls are 3520x1600 = 2.20 and the
-    // centre is 3840x1920 = 2.00, so every frame was composed to the wrong
-    // shape and then squeezed onto the wall. Pick whatever the model offers
-    // that is closest to this wall's real aspect.
-    if ((kind === 'img' || kind === 'refine' || kind === 'vid') && p.name === 'aspect_ratio' && Array.isArray(p.enum)) {
-      const want = (window.__theatre && window.__theatre.pickAspect)
-        ? window.__theatre.pickAspect(id, p.enum) : null;
-      const pick = (want && p.enum.includes(want)) ? want
-        : (p.enum.includes('16:9') ? '16:9' : p.default);
+    // 16:9 on every wall, by the owner's explicit choice. This replaced a
+    // per-wall pick from the room ledger (pickAspect: sides 3520x1600 = 2.20,
+    // centre 3840x1920 = 2.00, so usually 21:9) - pickAspect still exists if
+    // that is ever wanted back. It is only the default; each wall's dropdown
+    // can still be changed.
+    if (p.name === 'aspect_ratio' && Array.isArray(p.enum) && p.enum.includes('16:9')) {
+      p = { ...p, default: '16:9' };
+    }
+    // Resolution defaults: 1k where a model offers it (the image models -
+    // gpt_image_2, seedream_v5_pro, nano_banana_pro), otherwise 720p (the video
+    // models - seedance, Genjutsu). A model offering neither keeps its own.
+    if (p.name === 'resolution' && Array.isArray(p.enum)) {
+      const pick = p.enum.includes('1k') ? '1k' : p.enum.includes('720p') ? '720p' : null;
       if (pick) p = { ...p, default: pick };
     }
     return fieldControlHtml(`${kind}field-${id}`, p);
@@ -1510,12 +1589,13 @@ async function renderFieldsFor(kind, id, jst){
 }
 
 async function renderAllFields(kind){
-  const selectId = kind === 'img' ? 'imageModelSelect' : kind === 'vid' ? 'videoModelSelect' : 'editModelSelect';
+  const selectId = kind === 'img' ? 'imageModelSelect' : kind === 'vid' ? 'videoModelSelect'
+                 : kind === 'vidrefine' ? 'videoEditModelSelect' : 'editModelSelect';
   const jst = document.getElementById(selectId).value;
   const walls = kind === 'vid' ? WALLS : IMAGE_WALLS; // 'img' and 'refine' both apply to all three walls (IMAGE_WALLS === WALLS)
   await Promise.all(walls.map(w => renderFieldsFor(kind, w.id, jst)));
-  // Freshly built fields carry the model's own per-wall defaults (which can
-  // legitimately differ - see the per-wall aspect_ratio pick above). Linked,
+  // Freshly built fields carry the model's own defaults (the same on every
+  // wall today, but nothing guarantees a model keeps it that way). Linked,
   // take the left wall's value as the set's value so the three start in
   // agreement rather than drifting until someone notices; unlinked, each
   // wall keeps its own freshly-built default.
@@ -1684,7 +1764,7 @@ function wireStats(){
 const TAB_LAYOUT = [
   { id:'login', label:'Login',      anchors:['connHead'] },
   { id:'image', label:'Image',      anchors:['sceneRow','imgHead','refineHead'] },
-  { id:'video', label:'Video',      anchors:['videoModelRow','vidHead','genjutsuHead'] },
+  { id:'video', label:'Video',      anchors:['videoModelRow','vidHead','genjutsuHead','vidRefineHead'] },
   { id:'library', label:'Library',    anchors:[] },
   { id:'player',  label:'Player',     anchors:[] },
   { id:'stats',   label:'Statistics', anchors:['calHead'] },
@@ -1803,27 +1883,38 @@ document.addEventListener('click', async (e) => {
 // existing streamed URL, and reloading the page clears the set - there is
 // nothing here worth surviving a refresh, and nothing is uploaded or
 // generated by adding a clip to it.
+//
+// One fixed box per wall (left/center/right) rather than an ordered list -
+// the tool's own output is always one clip per wall, so the slot a clip goes
+// into should say which wall it stands in for, not just "3rd thing added".
+function playerSlotCard(w){
+  return '<div class="wallcard' + (w.id === 'center' ? ' center' : '') + '">'
+    + '<div class="wallcard-head"><span class="name">' + esc(w.label) + '</span>'
+    + '<span class="angle">' + esc(w.angle) + '</span></div>'
+    + '<div class="wallcard-body">'
+    + '<div id="playerSlot-' + w.id + '"></div>'
+    + '<div class="rigbar" style="margin:0;">'
+    + '<div class="f"><label>From library</label>'
+    + '<select id="playerLibPick-' + w.id + '" style="min-width:170px;"><option value="">choose a generated clip…</option></select></div>'
+    + '<div class="f"><label>&nbsp;</label><button class="btn ghost small" data-player-libadd="' + w.id + '">Add</button></div>'
+    + '</div>'
+    + '<button class="btn ghost small" data-player-filepick="' + w.id + '" style="align-self:flex-start;">Upload file from this computer…</button>'
+    + '<input type="file" id="playerFileInput-' + w.id + '" accept="video/*" style="display:none;">'
+    + '</div></div>';
+}
+
 const PLAYER_MARKUP = `
   <div class="card" style="margin:0 0 12px;">
-    <h2>Player <span class="sub">watch clips side by side, from the library or from this computer</span></h2>
-    <p style="margin:0 0 10px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;">
+    <h2>Player <span class="sub">watch left, center and right clips side by side, from the library or from this computer</span></h2>
+    <p style="margin:0 0 14px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;">
       Nothing added here is uploaded or generated — a library pick streams from Higgsfield exactly like
       the Library tab, and a file from this computer plays straight from your disk. Closing or reloading
-      the page clears this list; it is a scratch space, not a saved one.
+      the page clears these three slots; it is a scratch space, not a saved one.
     </p>
-    <div class="rigbar" style="margin:0 0 10px;">
-      <div class="f"><label>Add from library</label>
-        <select id="playerLibPick" style="min-width:260px;"><option value="">choose a generated clip…</option></select></div>
-      <div class="f"><label>&nbsp;</label><button class="btn ghost small" id="playerLibAddBtn">Add</button></div>
-      <div class="f"><label>&nbsp;</label>
-        <button class="btn ghost small" id="playerFilePickBtn">Add file(s) from this computer…</button>
-        <input type="file" id="playerFileInput" accept="video/*" multiple style="display:none;"></div>
-      <div class="f"><label>&nbsp;</label><span id="playerCount" style="font-family:var(--mono);font-size:11px;color:var(--muted-dim);align-self:center;"></span></div>
+    <div class="cols3" style="margin-bottom:14px;">
+      ${WALLS.map(playerSlotCard).join('')}
     </div>
-    <label class="dropzone" id="playerDropzone" style="aspect-ratio:auto;height:64px;margin-bottom:14px;">
-      <div class="dz-content"><span>…or drag video files here</span></div>
-    </label>
-    <div class="card" style="margin:0 0 14px;background:var(--surface-2);">
+    <div class="card" style="margin:0;background:var(--surface-2);">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <button class="btn small" id="playerPlayAllBtn" title="Start every loaded clip from zero at the same moment">Play all together</button>
         <button class="btn ghost small" id="playerPauseAllBtn">Pause all</button>
@@ -1836,46 +1927,35 @@ const PLAYER_MARKUP = `
       </div>
       <div class="statusline" id="playerTimingStatus" style="margin:6px 0 0;"></div>
     </div>
-    <div id="playerGrid" class="libgrid"></div>
   </div>`;
 
-const PLAYER_MAX = 3;   // matches the tool's own output: one clip per wall (L/C/R)
+let playerSlots = { left:null, center:null, right:null };   // wall id -> { label, url, isLocal } | null
 
-let playerItems = [];   // { id, label, url, isLocal }
-let playerSeq = 0;
-
-function renderPlayerGrid(){
-  const grid = document.getElementById('playerGrid');
-  if (!grid) return;
-  const atMax = playerItems.length >= PLAYER_MAX;
-  const countEl = document.getElementById('playerCount');
-  if (countEl) {
-    countEl.innerHTML = playerItems.length + ' of ' + PLAYER_MAX
-      + (playerItems.length === 1 ? ' clip loaded' : ' clips loaded')
-      + (atMax ? ' <span class="error-text">— max reached, remove one to add another</span>' : '');
-  }
-  const libAddBtn = document.getElementById('playerLibAddBtn');
-  const filePickBtn = document.getElementById('playerFilePickBtn');
-  if (libAddBtn) libAddBtn.disabled = atMax;
-  if (filePickBtn) filePickBtn.disabled = atMax;
-
-  if (!playerItems.length) {
-    grid.innerHTML = '<span style="font-family:var(--mono);font-size:11px;color:var(--muted-dim);">'
-      + 'Nothing loaded yet — add a clip from the library or from this computer above.</span>';
-    checkPlayerTiming();
+function renderPlayerSlot(wallId){
+  const host = document.getElementById('playerSlot-' + wallId);
+  if (!host) return;
+  const it = playerSlots[wallId];
+  if (!it) {
+    host.innerHTML = '<label class="dropzone" data-player-dz="' + wallId + '">'
+      + '<div class="dz-content"><span>drop a video file here for the ' + wallId + ' wall</span></div></label>';
+    wirePlayerDropzone(wallId);
     return;
   }
-  grid.innerHTML = playerItems.map(it => '<div class="playertile">'
+  host.innerHTML = '<div class="playertile">'
     + '<video src="' + it.url + '" controls preload="metadata" playsinline></video>'
     + '<div class="meta"><span>' + esc(it.label) + '</span>'
-    + '<button class="btn ghost small" data-player-remove="' + it.id + '" style="padding:1px 6px;">remove</button>'
-    + '</div></div>').join('');
-  playerVideoEls().forEach(v => v.addEventListener('loadedmetadata', checkPlayerTiming));
+    + '<button class="btn ghost small" data-player-remove="' + wallId + '" style="padding:1px 6px;">remove</button>'
+    + '</div></div>';
+  host.querySelector('video').addEventListener('loadedmetadata', checkPlayerTiming);
+}
+
+function renderPlayerGrid(){
+  WALLS.forEach(w => renderPlayerSlot(w.id));
   checkPlayerTiming();
 }
 
 function playerVideoEls(){
-  return [...document.querySelectorAll('#playerGrid video')];
+  return WALLS.map(w => document.querySelector('#playerSlot-' + w.id + ' video')).filter(Boolean);
 }
 
 // Flags a length mismatch as soon as it is knowable (metadata loaded for at
@@ -1897,65 +1977,69 @@ function checkPlayerTiming(){
   }
 }
 
-function addPlayerItem(label, url, isLocal){
-  if (playerItems.length >= PLAYER_MAX) {
-    const st = document.getElementById('playerTransportStatus');
-    if (st) st.innerHTML = '<span class="error-text">Player holds at most ' + PLAYER_MAX
-      + ' clips at a time — remove one before adding another.</span>';
-    return false;
-  }
-  playerItems.push({ id: ++playerSeq, label, url, isLocal });
-  renderPlayerGrid();
-  return true;
+function setPlayerSlot(wallId, label, url, isLocal){
+  const prev = playerSlots[wallId];
+  if (prev && prev.isLocal) { try { URL.revokeObjectURL(prev.url); } catch (e) {} }
+  playerSlots[wallId] = { label, url, isLocal };
+  renderPlayerSlot(wallId);
+  checkPlayerTiming();
 }
 
-function removePlayerItem(id){
-  const idx = playerItems.findIndex(it => it.id === id);
-  if (idx === -1) return;
-  const [it] = playerItems.splice(idx, 1);
+function removePlayerSlot(wallId){
+  const it = playerSlots[wallId];
+  if (!it) return;
   // Local files only ever exist as a blob: URL for the life of this page: not
   // revoking it on removal would keep the underlying file data pinned in
   // memory for as long as the tab stays open.
   if (it.isLocal) { try { URL.revokeObjectURL(it.url); } catch (e) {} }
-  renderPlayerGrid();
+  playerSlots[wallId] = null;
+  renderPlayerSlot(wallId);
+  checkPlayerTiming();
 }
 
 function clearPlayerItems(){
-  playerItems.forEach(it => { if (it.isLocal) { try { URL.revokeObjectURL(it.url); } catch (e) {} } });
-  playerItems = [];
-  renderPlayerGrid();
+  WALLS.forEach(w => removePlayerSlot(w.id));
 }
 
-function addLocalFilesToPlayer(files){
-  const vids = [...files].filter(f => /^video\//.test(f.type) || /\.(mp4|mov|webm|m4v)$/i.test(f.name));
-  let skipped = 0;
-  vids.forEach(f => {
-    if (!addPlayerItem(f.name, URL.createObjectURL(f), true)) skipped++;
-  });
-  if (skipped > 0) {
+function addLocalFileToPlayer(wallId, file){
+  const isVideo = /^video\//.test(file.type) || /\.(mp4|mov|webm|m4v)$/i.test(file.name);
+  if (!isVideo) {
     const st = document.getElementById('playerTransportStatus');
-    if (st) st.innerHTML = '<span class="error-text">Player holds at most ' + PLAYER_MAX
-      + ' clips at a time — ' + skipped + ' file' + (skipped === 1 ? '' : 's') + ' not added.</span>';
+    if (st) st.innerHTML = '<span class="error-text">' + esc(file.name) + ' is not a video file.</span>';
+    return;
   }
+  setPlayerSlot(wallId, file.name, URL.createObjectURL(file), true);
+}
+
+function wirePlayerDropzone(wallId){
+  const dz = document.querySelector('[data-player-dz="' + wallId + '"]');
+  if (!dz) return;
+  ['dragover','dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
+  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
+  dz.addEventListener('drop', e => {
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) addLocalFileToPlayer(wallId, f);
+  });
 }
 
 async function refreshPlayerLibraryList(){
-  const sel = document.getElementById('playerLibPick');
-  if (!sel) return;
   let rows = [];
   try { rows = (await api('/api/library')).library || []; } catch (e) { return; }
   const videos = rows.filter(r => r.kind === 'video');
-  sel.innerHTML = '<option value="">choose a generated clip…</option>' + videos.map(r => {
-    const bits = [r.wall, r.move, r.model, r.durationSec ? r.durationSec + 's' : null].filter(Boolean).join(' · ');
-    return '<option value="' + esc(r.url) + '" data-label="' + esc(bits || 'clip') + '">' + esc(bits || r.url) + '</option>';
-  }).join('');
+  WALLS.forEach(w => {
+    const sel = document.getElementById('playerLibPick-' + w.id);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">choose a generated clip…</option>' + videos.map(r => {
+      const bits = [r.wall, r.move, r.model, r.durationSec ? r.durationSec + 's' : null].filter(Boolean).join(' · ');
+      return '<option value="' + esc(r.url) + '" data-label="' + esc(bits || 'clip') + '">' + esc(bits || r.url) + '</option>';
+    }).join('');
+  });
 }
 
-// Same steps as the wall transport bar's playAllWalls() - wait for every clip
-// to actually be seekable before starting any of them (otherwise the first
-// one runs ahead while a later one is still buffering), mute so autoplay
-// policies do not block a synchronized start, and report a length mismatch
-// since mismatched clips drift apart on a loop.
+// Same start as the wall transport bar - startTogether() waits until every
+// clip can actually play through, starts them at once, and keeps the sync lock
+// running; see its comment for why the old per-transport copy needed several
+// clicks.
 async function playAllPlayer(){
   const vids = playerVideoEls();
   const st = document.getElementById('playerTransportStatus');
@@ -1964,15 +2048,8 @@ async function playAllPlayer(){
     return;
   }
   const loop = document.getElementById('playerLoopChk').checked;
-  vids.forEach(v => { v.loop = loop; v.muted = true; v.pause(); v.currentTime = 0; });
-  await Promise.all(vids.map(v => v.readyState >= 2
-    ? Promise.resolve()
-    : new Promise(res => {
-        const done = () => { v.removeEventListener('loadeddata', done); res(); };
-        v.addEventListener('loadeddata', done);
-        setTimeout(done, 4000);
-      })));
-  await Promise.all(vids.map(v => v.play().catch(() => {})));
+  const r = await startTogether(vids, loop, st);
+  if (r.failed) return;
   st.className = 'statusline ok';
   st.textContent = `Playing ${vids.length} clip${vids.length === 1 ? '' : 's'} together`
     + (loop ? ', looping.' : '.');
@@ -1980,6 +2057,7 @@ async function playAllPlayer(){
 }
 
 function pauseAllPlayer(){
+  stopSyncLock();
   playerVideoEls().forEach(v => v.pause());
   const st = document.getElementById('playerTransportStatus');
   st.className = 'statusline';
@@ -1987,38 +2065,41 @@ function pauseAllPlayer(){
 }
 
 function wirePlayer(){
-  document.getElementById('playerFilePickBtn').addEventListener('click', () =>
-    document.getElementById('playerFileInput').click());
-  document.getElementById('playerFileInput').addEventListener('change', (e) => {
-    addLocalFilesToPlayer(e.target.files);
-    e.target.value = '';   // so picking the same file again still fires 'change'
+  WALLS.forEach(w => {
+    const input = document.getElementById('playerFileInput-' + w.id);
+    input.addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (f) addLocalFileToPlayer(w.id, f);
+      e.target.value = '';   // so picking the same file again still fires 'change'
+    });
   });
 
-  const dz = document.getElementById('playerDropzone');
-  ['dragover','dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
-  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
-  dz.addEventListener('drop', e => addLocalFilesToPlayer(e.dataTransfer.files));
+  const panel = document.getElementById('tabpanel-player');
+  panel.addEventListener('click', (e) => {
+    const filePick = e.target.closest('[data-player-filepick]');
+    if (filePick) { document.getElementById('playerFileInput-' + filePick.dataset.playerFilepick).click(); return; }
 
-  document.getElementById('playerLibAddBtn').addEventListener('click', () => {
-    const sel = document.getElementById('playerLibPick');
-    const opt = sel.selectedOptions[0];
-    if (!opt || !opt.value) return;
-    addPlayerItem(opt.dataset.label || 'library clip', opt.value, false);
-    sel.value = '';
+    const libAdd = e.target.closest('[data-player-libadd]');
+    if (libAdd) {
+      const wallId = libAdd.dataset.playerLibadd;
+      const sel = document.getElementById('playerLibPick-' + wallId);
+      const opt = sel.selectedOptions[0];
+      if (!opt || !opt.value) return;
+      setPlayerSlot(wallId, opt.dataset.label || 'library clip', opt.value, false);
+      sel.value = '';
+      return;
+    }
+
+    const remove = e.target.closest('[data-player-remove]');
+    if (remove) { removePlayerSlot(remove.dataset.playerRemove); return; }
   });
 
   document.getElementById('playerPlayAllBtn').addEventListener('click', () => playAllPlayer().catch(() => {}));
   document.getElementById('playerPauseAllBtn').addEventListener('click', pauseAllPlayer);
   document.getElementById('playerLoopChk').addEventListener('change', (e) => {
-    playerVideoEls().forEach(v => { v.loop = e.target.checked; });
+    syncLoop = e.target.checked;   // looping is done by the sync lock, see startTogether
   });
   document.getElementById('playerClearBtn').addEventListener('click', clearPlayerItems);
-
-  document.getElementById('playerGrid').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-player-remove]');
-    if (!b) return;
-    removePlayerItem(Number(b.dataset.playerRemove));
-  });
 
   renderPlayerGrid();
 }
@@ -2521,6 +2602,19 @@ document.getElementById('editModelSelect').addEventListener('change', async (e) 
   await api('/api/model-choice', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ editModel: e.target.value }) });
   await renderAllFields('refine');
 });
+document.getElementById('videoEditModelSelect').addEventListener('change', async (e) => {
+  await api('/api/model-choice', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ videoEditModel: e.target.value }) });
+  await renderAllFields('vidrefine');
+});
+
+// The catalogue does not tag editing models, but the video ones are named for
+// it (kling_video_edit, flux_3_video_edit). Filtered from the live list so a
+// new one appears without a code change.
+function populateVideoEditSelect(selectEl, videoModels){
+  const edits = (videoModels || []).filter(m => /edit/i.test(m.job_type));
+  selectEl.innerHTML = edits.map(m => `<option value="${m.job_type}">${m.display_name}</option>`).join('');
+  return edits;
+}
 
 document.getElementById('imageCompositionMode').addEventListener('change', async (e) => {
   imageCompositionMode = e.target.value;
@@ -3153,10 +3247,27 @@ document.getElementById('verifyMotionBtn').addEventListener('click', async (e) =
           + '<br><span style="color:var(--muted-dim);">' + detail + '</span>';
       }
     });
-    const bad = d.verdict === 'mismatch' || d.verdict === 'off-spec';
+    const bad = d.verdict === 'mismatch' || d.verdict === 'off-spec' || (d.pace && !d.pace.matched);
     st.className = bad ? 'statusline' : 'statusline ok';
-    st.innerHTML = (bad ? '<span class="error-text">' + d.verdict.toUpperCase() + ' — ' : '')
+    const label = d.verdict === 'match' ? 'CENTRE OUT OF PACE' : String(d.verdict).toUpperCase();
+    st.innerHTML = (bad ? '<span class="error-text">' + label + ' — ' : '')
       + (d.notes || []).join(' ') + (bad ? '</span>' : '');
+    // The centre's pace against the sides, and the trim that would have
+    // matched it (rigspec.paceMatch). Applied only on a click - it changes the
+    // next centre prompt, and a set is one sample of a noisy generator.
+    if (d.pace && !d.pace.matched) {
+      const b = document.createElement('button');
+      b.className = 'btn small';
+      b.style.marginLeft = '8px';
+      b.textContent = 'Set centre trim to ' + d.pace.suggestedCentrePct + '%';
+      b.addEventListener('click', async () => {
+        document.getElementById('rigCentre').value = d.pace.suggestedCentrePct;
+        await pushSpeed().catch(() => {});
+        b.disabled = true;
+        b.textContent = 'Centre trim set to ' + d.pace.suggestedCentrePct + '% — regenerate the centre wall';
+      });
+      st.appendChild(b);
+    }
   } catch (err) {
     st.innerHTML = '<span class="error-text">' + err.message + '</span>';
   } finally { e.target.disabled = false; }
@@ -3500,29 +3611,116 @@ async function playAllWalls(){
     return;
   }
   const loop = document.getElementById('loopAllChk').checked;
-  vids.forEach(v => { v.loop = loop; v.muted = true; v.pause(); v.currentTime = 0; });
-
-  // Wait for every element to actually be seekable before starting any of them,
-  // otherwise the first one runs ahead while a later one is still buffering and
-  // the comparison is worthless.
-  await Promise.all(vids.map(v => v.readyState >= 2
-    ? Promise.resolve()
-    : new Promise(res => {
-        const done = () => { v.removeEventListener('loadeddata', done); res(); };
-        v.addEventListener('loadeddata', done);
-        setTimeout(done, 4000);
-      })));
-
-  await Promise.all(vids.map(v => v.play().catch(() => {})));
+  const r = await startTogether(vids, loop, st);
+  if (r.failed) return;
   const durs = vids.map(v => v.duration || 0);
   const spread = Math.max(...durs) - Math.min(...durs);
   st.className = 'statusline ok';
   st.textContent = `Playing ${vids.length} wall${vids.length === 1 ? '' : 's'} together`
     + (loop ? ', looping' : '')
-    + (spread > 0.15 ? ` — note the clips differ in length by ${spread.toFixed(2)}s, so they will drift apart on a loop.` : '.');
+    + (r.notReady ? ` — ${r.notReady} clip${r.notReady === 1 ? ' was' : 's were'} still buffering at the start; the sync lock will hold the others until it catches up` : '')
+    + (spread > 0.15 ? ` — note the clips differ in length by ${spread.toFixed(2)}s, so they cannot line up at every loop.` : '.');
+}
+
+// ONE START ROUTINE FOR BOTH TRANSPORTS (this bar and the Player tab).
+//
+// "It takes several clicks to get them playing together" had three causes:
+//   1. It started before the clips had loaded. The clips stream from the CDN
+//      with no preload, and the wait was on 'loadeddata' with a 4 s give-up -
+//      but 'loadeddata' means ONE frame is ready, not that the clip can play,
+//      and it fires once per element: a clip that had already fired it and
+//      dropped back while seeking to 0 never fired it again, so the wait always
+//      ran out and the set started half-buffered. The second click worked only
+//      because the first had filled the cache.
+//   2. Nothing held them together after the start. One stall mid-play, or
+//      loops wrapping at slightly different moments, and they stayed apart.
+//   3. play() errors were swallowed, so a clip that refused to play still
+//      reported "Playing".
+// So: preload fully, wait until every clip has finished seeking AND can play
+// through, start them together, then keep a sync lock running (below).
+function waitForPlayable(v, ms){
+  return new Promise(res => {
+    const ready = () => !v.seeking && v.readyState >= 4;   // HAVE_ENOUGH_DATA
+    if (ready()) return res(true);
+    const evs = ['seeked', 'canplay', 'canplaythrough', 'loadeddata', 'progress'];
+    let timer;
+    const finish = (ok) => { evs.forEach(e => v.removeEventListener(e, check)); clearTimeout(timer); res(ok); };
+    const check = () => { if (ready()) finish(true); };
+    evs.forEach(e => v.addEventListener(e, check));
+    timer = setTimeout(() => finish(ready()), ms);
+  });
+}
+
+async function startTogether(vids, loop, st){
+  stopSyncLock();
+  syncLoop = loop;
+  // Never the element's own loop: each clip would wrap on its own clock and
+  // slip ~0.015 s per loop (measured). The lock restarts them together instead.
+  vids.forEach(v => { v.loop = false; v.muted = true; v.pause(); });
+  vids.forEach(v => {
+    if (v.preload !== 'auto') { v.preload = 'auto'; if (v.readyState === 0) v.load(); }
+    v.currentTime = 0;
+  });
+  if (vids.some(v => v.readyState < 4 || v.seeking)) {
+    st.className = 'statusline';
+    st.textContent = 'Loading the clips so they can start together…';
+  }
+  const ready = await Promise.all(vids.map(v => waitForPlayable(v, 20000)));
+  const results = await Promise.allSettled(vids.map(v => v.play()));
+  const failed = results.filter(x => x.status === 'rejected');
+  if (failed.length) {
+    vids.forEach(v => v.pause());
+    st.innerHTML = '<span class="error-text">' + failed.length + ' clip' + (failed.length === 1 ? '' : 's')
+      + ' would not play (' + ((failed[0].reason && failed[0].reason.message) || 'unknown error')
+      + '). Nothing was started.</span>';
+    return { failed: failed.length, notReady: 0 };
+  }
+  startSyncLock(vids);
+  return { failed: 0, notReady: ready.filter(ok => !ok).length };
+}
+
+// THE SYNC LOCK. The first clip is the clock. Every 100 ms:
+//   - if any playing clip is starved (buffering), hold ALL of them until it has
+//     data again - otherwise the others run ahead of it;
+//   - if a follower has drifted more than 0.1 s from the clock, snap it back;
+//   - looping: once every clip has reached its end, restart all of them from
+//     0 together. A shorter clip waits on its last frame for the longest.
+let syncLockTimer = null, syncLoop = false;
+function stopSyncLock(){ if (syncLockTimer) { clearInterval(syncLockTimer); syncLockTimer = null; } }
+function startSyncLock(vids){
+  stopSyncLock();
+  const held = new Set();
+  syncLockTimer = setInterval(() => {
+    if (!vids.every(v => v.isConnected)) return stopSyncLock();   // a card was re-rendered
+    if (vids.every(v => v.ended)) {
+      if (!syncLoop) return stopSyncLock();
+      vids.forEach(v => { v.currentTime = 0; v.play().catch(() => {}); });
+      return;
+    }
+    const active = vids.filter(v => !v.ended && (!v.paused || held.has(v)));
+    if (!active.length) {
+      // Everything paused by hand stops the lock; a clip sitting on its last
+      // frame waiting for the others to finish does not.
+      if (!vids.some(v => v.ended)) stopSyncLock();
+      return;
+    }
+    const starved = active.some(v => v.readyState < 3 || v.seeking);
+    if (starved) {
+      active.forEach(v => { if (!v.paused && v.readyState >= 3) { v.pause(); held.add(v); } });
+      return;
+    }
+    if (held.size) { held.forEach(v => v.play().catch(() => {})); held.clear(); return; }
+    const clock = vids[0];
+    if (clock.paused || clock.ended) return;
+    vids.slice(1).forEach(v => {
+      if (v.paused || v.ended) return;
+      if (Math.abs(v.currentTime - clock.currentTime) > 0.1) v.currentTime = clock.currentTime;
+    });
+  }, 100);
 }
 
 function pauseAllWalls(){
+  stopSyncLock();
   wallVideoEls().forEach(v => v.pause());
   const st = document.getElementById('transportStatus');
   st.className = 'statusline';
@@ -3532,7 +3730,7 @@ function pauseAllWalls(){
 document.getElementById('playAllBtn').addEventListener('click', () => playAllWalls().catch(() => {}));
 document.getElementById('pauseAllBtn').addEventListener('click', pauseAllWalls);
 document.getElementById('loopAllChk').addEventListener('change', (e) => {
-  wallVideoEls().forEach(v => { v.loop = e.target.checked; });
+  syncLoop = e.target.checked;     // looping is done by the sync lock, see startTogether
 });
 
 // ================= SELF-CALIBRATION =================
@@ -3935,15 +4133,19 @@ function referenceImagePathFor(kind, id){
 // supplied path — the client only ever has a display URL for the wall's
 // current (possibly not-yet-approved) image, not a real local file.
 function promptModeFor(kind){
-  return kind === 'img' ? 'image' : kind === 'vid' ? 'video' : 'edit';
+  return kind === 'img' ? 'image' : kind === 'vid' ? 'video' : kind === 'vidrefine' ? 'videoedit' : 'edit';
 }
 
 async function improvePrompt(kind, id){
   const ta = document.getElementById(`${kind}prompt-${id}`);
   const btn = document.getElementById(`${kind}improve-${id}`);
   const statusEl = document.getElementById(`${kind}status-${id}`);
-  const imagePath = kind === 'refine' ? null : referenceImagePathFor(kind, id);
-  const hasImageContext = kind === 'refine' ? !!wallImageSrc(id) : !!imagePath;
+  // 'refine' and 'vidrefine' resolve their own image server-side (the wall's
+  // current still, or a frame of its current clip), so no path is sent.
+  const selfResolved = kind === 'refine' || kind === 'vidrefine';
+  const imagePath = selfResolved ? null : referenceImagePathFor(kind, id);
+  const hasImageContext = kind === 'refine' ? !!wallImageSrc(id)
+    : kind === 'vidrefine' ? !!state.walls[id].genVideoUrl : !!imagePath;
 
   btn.disabled = true;
   statusEl.className = 'statusline';
@@ -3970,7 +4172,9 @@ async function improvePrompt(kind, id){
     // needs to draft one before spending a render.
     ta.dataset.botDrafted = '1';
     await api('/api/prompt', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ wall:id, mode: promptModeFor(kind), text: result.improvedPrompt }) });
-    if (kind === 'refine') updateRefineGenerateEnabled(id); else updateGenerateEnabled(id);
+    if (kind === 'refine') updateRefineGenerateEnabled(id);
+    else if (kind === 'vidrefine') updateVidRefineGenerateEnabled(id);
+    else updateGenerateEnabled(id);
     const costNote = typeof result.costUsd === 'number' ? ` (~$${result.costUsd.toFixed(3)})` : '';
     statusEl.className = 'statusline ok';
     if (result.notes) {
@@ -4106,7 +4310,8 @@ async function generate(kind, id){
       // keeps polling in the background and will update state.json once
       // it finishes; nothing here to retry.
       setPill(kind, id, 'running');
-      statusEl.textContent = result.note || 'Still rendering on Higgsfield — click "Sync from chat" in a few minutes to check.';
+      statusEl.textContent = result.note || 'Still rendering on Higgsfield — this page will pick it up when it finishes.';
+      watchRunningJobs();
     } else {
       setPill(kind, id, 'failed');
       statusEl.textContent = 'No result URL — check the raw response.';
@@ -4126,6 +4331,7 @@ async function generate(kind, id){
       // since this job was submitted - a five second clip takes minutes - and
       // a clip labelled with a preset it was not generated under is worse than
       // no label, because it sends you to debug the wrong contract.
+      refreshVidRefinePreview(id);
       const moveUsed = result.moveUsed || document.getElementById('rigIntent').value;
       document.getElementById(`vidresult-${id}`).innerHTML = result.url
         ? `<video controls src="${result.url}"></video>`
@@ -4169,7 +4375,8 @@ async function generateRefine(id){
       statusEl.textContent = 'Done — review below, then Approve if it looks right.';
     } else if (result.timedOut) {
       setPill('refine', id, 'running');
-      statusEl.textContent = result.note || 'Still rendering — check back shortly.';
+      statusEl.textContent = result.note || 'Still rendering — this page will pick it up when it finishes.';
+      watchRunningJobs();
     } else {
       setPill('refine', id, 'failed');
       statusEl.textContent = 'No result URL — check the raw response.';
@@ -4192,6 +4399,114 @@ async function generateRefine(id){
     btn.disabled = false;
   }
 }
+
+// Applies a video Refinement edit — the wall's CURRENT clip through the chosen
+// video-edit model (see /api/edit-video). The result replaces genVideoUrl, so
+// the Video card above shows it too.
+async function generateVidRefine(id){
+  const editableText = document.getElementById(`vidrefineprompt-${id}`).value.trim();
+  const jst = document.getElementById('videoEditModelSelect').value;
+  const schema = await loadModelSchema(jst);
+  const params = readFields('vidrefine', id, schema);
+  const fullPrompt = fullVideoEditPrompt(editableText);
+
+  const btn = document.getElementById(`vidrefinegen-${id}`);
+  const statusEl = document.getElementById(`vidrefinestatus-${id}`);
+  btn.disabled = true;
+  setPill('vidrefine', id, 'running');
+  statusEl.textContent = 'Applying edit — video edits can take several minutes…';
+
+  try {
+    await api('/api/prompt', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ wall:id, mode:'videoedit', text: editableText }) });
+    const result = await api('/api/edit-video', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ wall:id, jst, prompt: fullPrompt, params }) });
+    if (result.url) {
+      setPill('vidrefine', id, 'completed');
+      setPill('vid', id, 'completed');
+      statusEl.textContent = 'Done — the edited clip is now this wall\'s video. The previous one is in version history.';
+    } else if (result.timedOut) {
+      setPill('vidrefine', id, 'running');
+      statusEl.textContent = result.note || 'Still rendering — this page will pick it up when it finishes.';
+      watchRunningJobs();
+    } else {
+      setPill('vidrefine', id, 'failed');
+      statusEl.textContent = 'No result URL — check the raw response.';
+    }
+    state = await api('/api/state');
+    renderHistory().catch(() => {});
+    clearWallRating('vid', id);
+    clearWallRating('vidrefine', id);
+    restoreGenState('vid', id, state.walls[id].genVideoStatus, state.walls[id].genVideoUrl);
+    refreshVidRefinePreview(id);
+  } catch (e) {
+    setPill('vidrefine', id, 'failed');
+    statusEl.innerHTML = `<span class="error-text">${e.message}</span>`;
+  } finally {
+    updateVidRefineGenerateEnabled(id);
+  }
+}
+
+// PICKING UP A JOB THAT FINISHED AFTER ITS REQUEST RETURNED.
+//
+// A generation or refinement that outlives the server's wait budget is handed
+// to pollJobInBackground, which writes the result into state.json when
+// Higgsfield finishes - but nothing told the page, so a refinement that
+// completed on Higgsfield never appeared here until someone reloaded. While any
+// wall is still 'running', re-read state and redraw whatever changed. Stops by
+// itself once nothing is running, and after two hours (a server restart kills
+// the background poller and would otherwise leave 'running' forever).
+let jobWatchTimer = null, jobWatchStarted = 0;
+function anyJobRunning(st){
+  return !!st && WALLS.some(w => st.walls[w.id].genImageStatus === 'running'
+                              || st.walls[w.id].genVideoStatus === 'running');
+}
+function watchRunningJobs(){
+  if (jobWatchTimer) return;
+  jobWatchStarted = Date.now();
+  jobWatchTimer = setInterval(async () => {
+    let next;
+    try { next = await api('/api/state'); } catch (e) { return; }
+    const prev = state;
+    state = next;
+    WALLS.forEach(w => {
+      const a = prev.walls[w.id], b = next.walls[w.id];
+      if (a.genImageUrl !== b.genImageUrl || a.genImageStatus !== b.genImageStatus) {
+        refreshWallImageDisplays(w.id);
+        restoreGenState('img', w.id, b.genImageStatus, b.genImageUrl);
+        restoreGenState('refine', w.id, b.genImageStatus, b.genImageUrl);
+        if (b.genImageStatus === 'completed') {
+          clearWallRating('img', w.id); clearWallRating('refine', w.id);
+          ['img', 'refine'].forEach(k => {
+            const el = document.getElementById(`${k}status-${w.id}`);
+            if (el) el.textContent = 'Finished on Higgsfield — review, then Approve if it looks right.';
+          });
+        }
+      }
+      if (a.genVideoUrl !== b.genVideoUrl || a.genVideoStatus !== b.genVideoStatus) {
+        restoreGenState('vid', w.id, b.genVideoStatus, b.genVideoUrl);
+        restoreGenState('vidrefine', w.id, b.genVideoStatus, b.genVideoUrl);
+        refreshVidRefinePreview(w.id);
+        if (b.genVideoStatus === 'completed') {
+          clearWallRating('vid', w.id); clearWallRating('vidrefine', w.id);
+          ['vid', 'vidrefine'].forEach(k => {
+            const el = document.getElementById(`${k}status-${w.id}`);
+            if (el) el.textContent = 'Finished on Higgsfield.';
+          });
+        }
+      }
+    });
+    if (!anyJobRunning(next) || Date.now() - jobWatchStarted > 2 * 60 * 60 * 1000) {
+      clearInterval(jobWatchTimer); jobWatchTimer = null;
+      renderHistory().catch(() => {});
+    }
+  }, 8000);
+}
+
+WALLS.forEach(w => {
+  const vrta = document.getElementById(`vidrefineprompt-${w.id}`);
+  vrta.addEventListener('input', () => { vrta.dataset.userEdited = '1'; updateVidRefineGenerateEnabled(w.id); });
+  document.getElementById(`vidrefinegen-${w.id}`).addEventListener('click', () => generateVidRefine(w.id));
+  document.getElementById(`vidrefineimprove-${w.id}`).addEventListener('click', () => improvePrompt('vidrefine', w.id));
+});
 
 WALLS.forEach(w => {
   wireDropzone('vid', w.id);
@@ -4318,8 +4633,10 @@ async function verifyBuild(){
       populateModelSelect(document.getElementById('editModelSelect'), 'image'),
     ]);
     preferDefault(document.getElementById('imageModelSelect'), imageModels, 'gpt_image_2');
-    preferDefault(document.getElementById('videoModelSelect'), videoModels, 'seedance_2_0');
+    preferDefault(document.getElementById('videoModelSelect'), videoModels, 'seedance_2_5');
     preferDefault(document.getElementById('editModelSelect'), editModels, 'flux_kontext');
+    const videoEditModels = populateVideoEditSelect(document.getElementById('videoEditModelSelect'), videoModels);
+    preferDefault(document.getElementById('videoEditModelSelect'), videoEditModels, 'kling_video_edit');
   } catch (e) {
     ['imageModelStatus','videoModelStatus'].forEach(id => {
       const el = document.getElementById(id);
@@ -4330,10 +4647,15 @@ async function verifyBuild(){
   if (state.imageModel) document.getElementById('imageModelSelect').value = state.imageModel;
   if (state.videoModel) document.getElementById('videoModelSelect').value = state.videoModel;
   if (state.editModel) document.getElementById('editModelSelect').value = state.editModel;
+  if (state.videoEditModel) document.getElementById('videoEditModelSelect').value = state.videoEditModel;
+  // A job left running by an earlier visit (or another tab) finishes into
+  // state.json in the background; watch for it rather than wait for a reload.
+  if (anyJobRunning(state)) watchRunningJobs();
   try {
     await renderAllFields('img');
     await renderAllFields('vid');
     await renderAllFields('refine');
+    await renderAllFields('vidrefine');
     await refreshStartEndFrameVisibility();
   } catch (e) { /* no catalog -> no param fields; the rest of the page still works */ }
   // New sections. Each is wrapped so one failing endpoint (e.g. Python not

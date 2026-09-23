@@ -624,6 +624,46 @@ function compare(moveId, wallId, measured, speedPct, centrePct) {
   return row;
 }
 
+/**
+ * DOES THE CENTRE KEEP PACE WITH THE SIDES? A set-level test that compare()
+ * cannot make, because it only ever sees one wall.
+ *
+ * Each wall's delivered/asked ratio (dx for the sides, log-scale for the
+ * centre - the units the spec compounds in) says how hard that job ran against
+ * its own ask. The rig reads as one camera only if the three ran equally hard,
+ * so the centre's ratio over the sides' mean is its pace. Measured on the
+ * delivered sets in the Library: 0.95, 0.36, and two lone centres at 3.3 and
+ * 3.6 against sides near 1.1 - the same contract every time, so this is
+ * per-scene variance a fixed trim cannot remove. It is measured per set and
+ * turned into the centre trim that would have matched, for a centre-only
+ * re-roll of that scene.
+ *
+ * `rows` are compare() rows; `centrePct` the trim they were measured under.
+ */
+function paceMatch(rows, centrePct) {
+  const byWall = {};
+  (rows || []).forEach(r => { byWall[r.wall] = r; });
+  const c = byWall.center;
+  const sides = ['left', 'right'].map(w => byWall[w])
+    .filter(r => r && r.dx && r.dx.ratio > 0 && r.dx.sameDirection !== false);
+  if (!c || !c.scale || !(c.scale.ratio > 0) || !sides.length) return null;
+  const sideRatio = sides.reduce((a, r) => a + r.dx.ratio, 0) / sides.length;
+  const pace = c.scale.ratio / sideRatio;
+  const cp = Number(centrePct) > 0 ? Number(centrePct) : 100;
+  // The trim box's own range; rounded to its 5% step.
+  const suggested = Math.min(400, Math.max(5, Math.round(cp / pace / 5) * 5));
+  const matched = pace >= 0.8 && pace <= 1.25;
+  return {
+    centreRatio: round(c.scale.ratio, 2), sideRatio: round(sideRatio, 2), pace: round(pace, 2),
+    matched, centrePct: cp, suggestedCentrePct: matched ? cp : suggested,
+    note: matched
+      ? 'The centre kept pace with the sides (' + round(pace, 2) + 'x).'
+      : 'The centre ran at ' + round(pace, 2) + 'x the pace of the side walls ('
+        + (pace > 1 ? 'too fast' : 'too slow') + '). A centre trim of ' + suggested
+        + '% would have matched this set - apply it and regenerate the centre only.',
+  };
+}
+
 // ------------------------------------------------------------------ JSON ---
 // THE PROMPT FORMAT THAT ACTUALLY WORKED.
 //
@@ -940,6 +980,6 @@ function presetIds() { return Object.keys(MOVES); }
 module.exports = {
   cameraGloss,
   MOVES, REF_VIEW_PX, WALL_PX, WALL_H, FPS, SAFE_PX_PER_FRAME, BENCHMARK_DX_RATE,
-  normalise, spec, posAt, posAtY, landmarkRows, numericBlock, inspector, presetIds, compare,
+  normalise, spec, posAt, posAtY, landmarkRows, numericBlock, inspector, presetIds, compare, paceMatch,
   cameraJson, travelWord, anchorsFor,
 };

@@ -132,12 +132,23 @@ async function resolveWallLocalImagePath(wall){
   return st.approvedImagePath || st.uploadedImagePath || null;
 }
 
+// The video counterpart: a fresh local copy of this wall's CURRENT clip, so a
+// second video refinement edits the first one's result, not the original.
+async function resolveWallLocalVideoPath(wall){
+  const u = state.walls[wall].genVideoUrl;
+  if (!u) return null;
+  const ext = path.extname(new URL(u).pathname) || '.mp4';
+  const dest = path.join(UPLOADS_DIR, `${wall}-vidcurrent-${Date.now()}${ext}`);
+  await downloadFile(u, dest);
+  return dest;
+}
+
 const WALL_IDS = ['left', 'center', 'right'];
 function defaultState() {
   const walls = {};
   WALL_IDS.forEach(id => {
     walls[id] = {
-      imagePrompt: '', videoPrompt: '', editPrompt: '',
+      imagePrompt: '', videoPrompt: '', editPrompt: '', videoEditPrompt: '',
       uploadedImagePath: null,
       genImageUrl: null, genImageStatus: null,
       approvedImagePath: null,
@@ -154,7 +165,7 @@ function defaultState() {
     };
   });
   return {
-    scene: '', imageModel: null, videoModel: null, editModel: null,
+    scene: '', imageModel: null, videoModel: null, editModel: null, videoEditModel: null,
     videoMotionMode: 'moving', videoCameraSpeedPct: 100, imageCompositionMode: 'distinct',
     // The rig spec replaces the old per-wall independent movement rules: ONE
     // physical camera intent that derives all three walls' locked blocks.
@@ -309,7 +320,7 @@ async function refreshCentreGradeRef(){
 function invalidateSidesForNewCentre(){
   ['left', 'right'].forEach(w => {
     Object.assign(state.walls[w], {
-      imagePrompt: '', videoPrompt: '', editPrompt: '',
+      imagePrompt: '', videoPrompt: '', editPrompt: '', videoEditPrompt: '',
       uploadedImagePath: null, approvedImagePath: null,
       genImageUrl: null, genImageStatus: null,
       genVideoUrl: null, genVideoStatus: null,
@@ -332,7 +343,7 @@ function invalidateSceneForNewCentre(){
   const c = state.walls.center;
   c.genImageUrl = null; c.genImageStatus = null; c.approvedImagePath = null;
   c.genVideoUrl = null; c.genVideoStatus = null;
-  c.imagePrompt = ''; c.videoPrompt = ''; c.editPrompt = '';
+  c.imagePrompt = ''; c.videoPrompt = ''; c.editPrompt = ''; c.videoEditPrompt = '';
   c.startFramePath = null; c.endFramePath = null;
   invalidateSidesForNewCentre();
 }
@@ -784,7 +795,9 @@ async function pollJobUntilDone(jobId, maxWaitMs, intervalMs = 5000){
 // as a safety net against polling forever on a job Higgsfield lost track
 // of. Uses the same short-call-through-the-queue approach as
 // pollJobUntilDone, so it never blocks other CLI calls either.
-function pollJobInBackground(wall, mode, jobId){
+// `meta` fills the Library row (model, move, dials, note) the way the
+// foreground path would have, so a slow job is not recorded as anonymous.
+function pollJobInBackground(wall, mode, jobId, meta){
   const intervalMs = 10000;
   const maxIterations = Math.ceil(2 * 60 * 60 * 1000 / intervalMs);
   let i = 0;
@@ -799,7 +812,7 @@ function pollJobInBackground(wall, mode, jobId){
         else { state.walls[wall].genVideoUrl = resultUrl; state.walls[wall].genVideoStatus = resultUrl ? 'completed' : 'failed'; }
         recordInLibrary(state, { at: new Date().toISOString(), wall, kind: mode,
                                url: state.walls[wall][mode === 'image' ? 'genImageUrl' : 'genVideoUrl'],
-                               model: null, move: null, scene: (state.scene || '').slice(0, 120) });
+                               model: null, move: null, scene: (state.scene || '').slice(0, 120), ...(meta || {}) });
         saveState();
         return;
       }
@@ -939,8 +952,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/prompt') {
       const body = JSON.parse((await readBody(req)).toString('utf8'));
       const { wall, mode, text } = body;
-      if (!WALL_IDS.includes(wall) || !['image', 'video', 'edit'].includes(mode)) return sendJson(res, 400, { error: 'bad wall/mode' });
-      const field = mode === 'image' ? 'imagePrompt' : mode === 'video' ? 'videoPrompt' : 'editPrompt';
+      if (!WALL_IDS.includes(wall) || !['image', 'video', 'edit', 'videoedit'].includes(mode)) return sendJson(res, 400, { error: 'bad wall/mode' });
+      const field = mode === 'image' ? 'imagePrompt' : mode === 'video' ? 'videoPrompt'
+                  : mode === 'videoedit' ? 'videoEditPrompt' : 'editPrompt';
       // Only snapshot when a non-empty prompt is actually being replaced by
       // something different — otherwise every keystroke-save would flood the
       // history with near-identical records.
@@ -958,6 +972,7 @@ const server = http.createServer(async (req, res) => {
       if (body.imageModel !== undefined) state.imageModel = body.imageModel;
       if (body.videoModel !== undefined) state.videoModel = body.videoModel;
       if (body.editModel !== undefined) state.editModel = body.editModel;
+      if (body.videoEditModel !== undefined) state.videoEditModel = body.videoEditModel;
       if (body.videoMotionMode !== undefined) state.videoMotionMode = body.videoMotionMode;
       if (body.videoCameraSpeedPct !== undefined) state.videoCameraSpeedPct = body.videoCameraSpeedPct;
       if (body.imageCompositionMode !== undefined) {
@@ -1056,8 +1071,8 @@ const server = http.createServer(async (req, res) => {
       // wall generated under one preset could be labelled with another if the
       // picker moved while it rendered - and a wall was, which made "the left
       // wall did not move" unreadable because the badge said C_TrackLeft.
-      const moveUsedForJob = require('./rigspec.js').normalise(
-        (LEARN.applyCalibration(state.calibration, state.rig || RIG.defaultRig()) || {}).intent);
+      const appliedForJob = LEARN.applyCalibration(state.calibration, state.rig || RIG.defaultRig()) || {};
+      const moveUsedForJob = require('./rigspec.js').normalise(appliedForJob.intent);
 
       const sendParams = Object.assign({}, params || {});
       if (sendParams.extension_mode && sendParams.mode !== 'video_extension') {
@@ -1196,7 +1211,12 @@ const server = http.createServer(async (req, res) => {
           // and keep polling in the background so state.json (and the
           // page, next time it syncs) picks up the real outcome once the
           // job actually finishes, with no further action needed here.
-          pollJobInBackground(wall, mode, jobId);
+          pollJobInBackground(wall, mode, jobId, {
+            model: jst, move: mode === 'video' ? moveUsedForJob : null,
+            speedPct: mode === 'video' ? appliedForJob.speedPct : null,
+            centrePct: mode === 'video' ? (appliedForJob.centrePct || 100) : null,
+            durationSec: (params || {}).duration || null, resolution: (params || {}).resolution || null,
+          });
           return sendJson(res, 200, { url: null, job, jobId, timedOut: true, moveUsed: moveUsedForJob,
             note: `Still rendering on Higgsfield past our own check-in window — normal for 4K video. Status will update to completed/failed automatically once it finishes; click "Sync from chat" or reload to check.` });
         }
@@ -1206,6 +1226,11 @@ const server = http.createServer(async (req, res) => {
           recordInLibrary(state, {
             at: new Date().toISOString(), wall, kind: mode, url: resultUrl,
             model: jst, move: mode === 'video' ? moveUsedForJob : null,
+            // The dials this clip's contract was written with, so Check
+            // against preset can measure it against ITS ask, not whatever the
+            // dials say by the time someone presses the button.
+            speedPct: mode === 'video' ? appliedForJob.speedPct : null,
+            centrePct: mode === 'video' ? (appliedForJob.centrePct || 100) : null,
             durationSec: (params || {}).duration || null,
             resolution: (params || {}).resolution || null,
             scene: (state.scene || '').slice(0, 120),
@@ -1239,7 +1264,7 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)).toString('utf8'));
       const { wall, mode, currentPrompt, scene, compositionMode } = body;
       let { imagePath } = body;
-      if (!WALL_IDS.includes(wall) || !['image', 'video', 'edit'].includes(mode)) return sendJson(res, 400, { error: 'bad wall/mode' });
+      if (!WALL_IDS.includes(wall) || !['image', 'video', 'edit', 'videoedit'].includes(mode)) return sendJson(res, 400, { error: 'bad wall/mode' });
 
       // REFUSE RATHER THAN INVENT. A side wall's description is, by definition,
       // derived from the centre image. With no readable centre the bot still
@@ -1270,6 +1295,15 @@ const server = http.createServer(async (req, res) => {
         imagePath = await resolveWallLocalImagePath(wall);
         if (!imagePath) return sendJson(res, 400, { error: `${wall} has no image yet — generate or upload one first` });
       }
+      // 'videoedit' works on the wall's finished CLIP. The writer cannot watch
+      // a video, so it is shown one frame from a second in - past any first-
+      // frame hold, still close enough to the start to show what is in shot.
+      if (mode === 'videoedit') {
+        const clip = await resolveWallLocalVideoPath(wall);
+        if (!clip) return sendJson(res, 400, { error: `${wall} has no finished clip yet — generate its video first` });
+        imagePath = path.join(path.dirname(clip), path.basename(clip, path.extname(clip)) + '-frame.png');
+        await runFfmpeg(['-y', '-ss', '1', '-i', clip, '-frames:v', '1', imagePath]);
+      }
 
       const imageNote = imagePath
         ? `\n\nThe reference image for this wall is at: ${imagePath}\nUse the Read tool to look at it, and make sure the text accurately reflects what's actually visible there (setting, objects, lighting, style) rather than inventing unrelated content.`
@@ -1284,6 +1318,20 @@ const server = http.createServer(async (req, res) => {
         // about what the locked block says is derived from the current rig
         // intent, not hardcoded to a forward push.
         instruction = buildVideoInstruction(wall, currentPrompt, scene, imagePath, await allWallImages());
+      } else if (mode === 'videoedit') {
+        // Video counterpart of 'edit' below: ONE small change to a finished
+        // clip, run through a video-EDITING model. A separate locked note
+        // (VIDEO_EDIT_LOCK_NOTE in index.html) already tells the editor to
+        // keep every frame's movement and timing, so this only names the one
+        // change. It must not mention motion at all - the contract governs
+        // that, and a second opinion here is how walls drift apart.
+        instruction = `You are refining a SMALL, TARGETED edit instruction for an AI video-editing tool that will modify ONE existing video clip in a synchronized multi-wall composition — remove or add exactly one small thing, for the whole length of the clip, nothing more. A separate fixed instruction (not shown to you) already tells the editor to leave everything else exactly as it is — how the picture moves, its timing, framing, lighting, palette, and every object not mentioned — so do not restate any of that, and do not describe any movement.
+
+The attached image is one frame from the clip. Look at it first.
+
+Current draft edit instruction: ${currentPrompt || `(empty — the user hasn't decided yet. Pick ONE small, plausible object visible in the frame to remove, OR ONE small, unobtrusive object to add that would plausibly belong in this exact setting — nothing that changes the composition, main subject, or mood. State clearly in "notes" that this was your own suggestion, not the user's request.)`}${imageNote}
+
+Write ONE clear, concrete, single-item instruction naming the specific object and, if there is more than one plausible candidate, enough detail to pick out the right one — e.g. "Remove the red sled leaning against the fence, just left of center, for the whole clip." Do not describe the whole scene, do not request lighting/style/mood changes, do not bundle more than one change. Put ONLY that instruction in "improved_prompt", ending on a complete sentence — no preamble, no meta-commentary. If the draft is ambiguous or you made the suggestion yourself, put AT MOST one short sentence in "notes" — leave "notes" empty otherwise. Prioritize finishing "improved_prompt" completely over writing "notes" at all.`;
       } else if (mode === 'edit') {
         // This is the "Refine image" section — a small touch-up pass on a
         // wall's already-almost-right image (remove/add ONE small object),
@@ -1428,7 +1476,12 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       const RIGSPEC = require('./rigspec.js');
       const moveId = RIGSPEC.normalise(state.rig && state.rig.intent);
       const dur = (state.rig && state.rig.durationSec) || 5;
-      const out = { move: moveId, durationSec: dur, walls: {}, verdict: 'unknown', notes: [] };
+      // The numbers the prompt was actually written with - the speed dial
+      // after calibration, and the centre trim. Leaving them out compared
+      // every clip against 100% with no trim, whatever the dials said.
+      const applied = LEARN.applyCalibration(state.calibration, state.rig || RIG.defaultRig()) || {};
+      const out = { move: moveId, durationSec: dur, walls: {}, verdict: 'unknown', notes: [],
+                    speedPct: applied.speedPct, centrePct: applied.centrePct };
 
       for (const w of WALL_IDS) {
         const url = state.walls[w].genVideoUrl;
@@ -1456,10 +1509,25 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
         // length asked for. Compare TOTALS, which is what transfers between
         // clip lengths - comparing per-second rates is what made the old
         // check call a correct five-second clip "too weak".
-        const row = RIGSPEC.compare(moveId, w, got);
+        // Prefer the dials this clip was generated under (recorded in the
+        // Library since this change); older clips fall back to the current ones.
+        const rec = (state.library || []).find(r => r.url === state.walls[w].genVideoUrl) || {};
+        const sp = rec.speedPct || applied.speedPct;
+        const cp = rec.centrePct || applied.centrePct;
+        const row = RIGSPEC.compare(moveId, w, got, sp, cp);
+        row.dialsFrom = rec.speedPct ? 'generation' : 'current';
+        if (w === 'center') out.centrePct = cp || 100;
         cmp.push(row);
       }
       out.comparison = cmp;
+      if (cmp.some(r => r.dialsFrom === 'current')) {
+        out.notes.push('Some clips predate dial recording and are compared against the CURRENT speed '
+                     + '(' + applied.speedPct + '%) - if the dial has moved since they were made, their '
+                     + 'distance figures are off by that ratio. The centre-pace check is a ratio between '
+                     + 'walls and is unaffected.');
+      }
+      out.pace = RIGSPEC.paceMatch(cmp, out.centrePct);
+      if (out.pace && !out.pace.matched) out.notes.push(out.pace.note);
 
       const bad = cmp.filter(c => c.problems.length);
       if (!cmp.length) { out.verdict = 'unknown'; out.notes.push('Nothing measurable yet - generate a set first.'); }
@@ -2046,17 +2114,104 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
         }
 
         if (!resultUrl && timedOut) {
-          pollJobInBackground(wall, 'image', jobId);
+          pollJobInBackground(wall, 'image', jobId, { model: jst, note: 'refinement edit' });
           return sendJson(res, 200, { url: null, jobId, timedOut: true,
             note: 'Still rendering on Higgsfield past the wait budget — status will update automatically once it finishes.' });
         }
 
         state.walls[wall].genImageUrl = resultUrl;
         state.walls[wall].genImageStatus = resultUrl ? 'completed' : 'failed';
+        if (resultUrl) {
+          recordInLibrary(state, {
+            at: new Date().toISOString(), wall, kind: 'image', url: resultUrl,
+            model: jst, move: null, scene: (state.scene || '').slice(0, 120), note: 'refinement edit',
+          });
+        }
         saveState();
-        return sendJson(res, 200, { url: resultUrl, job, moveUsed: moveUsedForJob });
+        // No moveUsed here: that const lives in /api/generate's scope, and
+        // naming it threw a ReferenceError AFTER the new URL was saved - the
+        // catch below then marked the wall 'failed' and the page never
+        // redrew, so every successful edit looked like it had not happened.
+        return sendJson(res, 200, { url: resultUrl, job });
       } catch (err) {
         state.walls[wall].genImageStatus = 'failed';
+        saveState();
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+
+    // ---- Refine video: the same one-small-change edit, on a finished clip ----
+    //
+    // Mirrors /api/edit-image. The wall's CURRENT clip goes to a video-EDITING
+    // model (#videoEditModelSelect - kling_video_edit, flux_3_video_edit, or
+    // whatever the catalogue offers with a `video_references` input) and the
+    // result replaces genVideoUrl in place, so the Video card, Play all and
+    // Check against preset all see it with no new state shape. Chains the same
+    // way: a second edit edits the first one's result.
+    if (req.method === 'POST' && p === '/api/edit-video') {
+      const body = JSON.parse((await readBody(req)).toString('utf8'));
+      const { wall, jst, prompt, params } = body;
+      if (!WALL_IDS.includes(wall)) return sendJson(res, 400, { error: 'bad wall' });
+
+      const clipPath = await resolveWallLocalVideoPath(wall);
+      if (!clipPath) return sendJson(res, 400, { error: `${wall} has no finished clip yet to edit — generate its video first` });
+
+      // The pre-edit clip is only recoverable if it is snapshotted first.
+      LEARN.snapshotWall(state.history, wall, state.walls[wall], 'pre-video-edit', {
+        sceneKey: state.centreRefHash,
+        model: jst, promptSubmitted: prompt,
+      });
+      // An edit keeps the source clip's motion, so it keeps its preset label.
+      const src = (state.library || []).find(r => r.url === state.walls[wall].genVideoUrl);
+
+      const args = ['generate', 'create', jst, '--prompt', cliPromptArg(prompt)];
+      Object.entries(params || {}).forEach(([k, v]) => {
+        if (v === '' || v === null || v === undefined) return;
+        args.push(`--${k}`, String(v));
+      });
+      args.push('--video-references', clipPath, '--json');
+
+      state.walls[wall].genVideoStatus = 'running';
+      saveState();
+
+      try {
+        const createRaw = await runCli(HIGGSFIELD_BIN, args);
+        const createdParsed = JSON.parse(createRaw);
+        const createdItem = Array.isArray(createdParsed) ? createdParsed[0] : createdParsed;
+        const jobId = typeof createdItem === 'string' ? createdItem : createdItem?.id;
+        if (!jobId) throw new Error(`Higgsfield didn't return a job id: ${createRaw.slice(0, 300)}`);
+        const createdStatus = typeof createdItem === 'object' ? createdItem?.status : undefined;
+
+        let resultUrl = jobResultUrl(createdItem), job = createdItem, timedOut = false;
+        if (!TERMINAL_STATUSES.includes(createdStatus)) {
+          ({ url: resultUrl, job, timedOut } = await pollJobUntilDone(jobId, 25 * 60 * 1000));
+        }
+
+        if (!resultUrl && timedOut) {
+          pollJobInBackground(wall, 'video', jobId, {
+            model: jst, move: src ? src.move : null, note: 'refinement edit',
+            speedPct: src ? src.speedPct : null, centrePct: src ? src.centrePct : null,
+            durationSec: src ? src.durationSec : null, resolution: src ? src.resolution : null,
+          });
+          return sendJson(res, 200, { url: null, jobId, timedOut: true,
+            note: 'Still rendering on Higgsfield past the wait budget — this page will pick it up automatically once it finishes.' });
+        }
+
+        state.walls[wall].genVideoUrl = resultUrl;
+        state.walls[wall].genVideoStatus = resultUrl ? 'completed' : 'failed';
+        if (resultUrl) {
+          recordInLibrary(state, {
+            at: new Date().toISOString(), wall, kind: 'video', url: resultUrl,
+            model: jst, move: src ? src.move : null,
+            speedPct: src ? src.speedPct : null, centrePct: src ? src.centrePct : null,
+            durationSec: src ? src.durationSec : null, resolution: src ? src.resolution : null,
+            scene: (state.scene || '').slice(0, 120), note: 'refinement edit',
+          });
+        }
+        saveState();
+        return sendJson(res, 200, { url: resultUrl, job, moveUsed: src ? src.move : null });
+      } catch (err) {
+        state.walls[wall].genVideoStatus = 'failed';
         saveState();
         return sendJson(res, 500, { error: err.message });
       }
@@ -2501,6 +2656,7 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       LEARN.snapshotWall(state.history, wall, state.walls[wall], 'restore-point', { sceneKey: state.centreRefHash });
       Object.assign(state.walls[wall], {
         imagePrompt: v.imagePrompt || '', videoPrompt: v.videoPrompt || '', editPrompt: v.editPrompt || '',
+        videoEditPrompt: v.videoEditPrompt || '',
         genImageUrl: v.genImageUrl || null, genVideoUrl: v.genVideoUrl || null,
         approvedImagePath: v.approvedImagePath || null, uploadedImagePath: v.uploadedImagePath || null,
         genImageStatus: v.genImageUrl ? 'completed' : null,
