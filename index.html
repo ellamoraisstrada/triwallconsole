@@ -503,7 +503,7 @@
 
   <div class="setup" id="sceneRow">
     <div class="card" id="sceneCard">
-      <h2>Scene <span class="sub">describe the centre wall — option A only</span></h2>
+      <h2>Scene <span class="sub">describe the centre wall — option B only</span></h2>
       <textarea id="sceneInput" placeholder="Describe the whole shot: what's in it, lighting, action, camera movement and timing. Click Save scene, then use each wall's own Draft button below to fill in its prompt."></textarea>
       <div class="actions">
         <button class="btn small" id="saveSceneBtn" title="Saves this text as the scene, and clears every wall's own prompt field back to just its locked rules — draft each wall fresh from there">Save scene</button>
@@ -554,11 +554,11 @@
     </div>
   </div>
   <div class="modepick" id="imageSourceMode">
-    <button class="modebtn active" data-imode="text">
-      <b>A · Text prompt</b><span>Describe the centre scene and generate it. Nothing to upload.</span>
+    <button class="modebtn active" data-imode="image">
+      <b>A · Upload a centre image</b><span>You already have the centre frame. Left &amp; right are extended from it.</span>
     </button>
-    <button class="modebtn" data-imode="image">
-      <b>B · Upload a centre image</b><span>You already have the centre frame. Left &amp; right are extended from it.</span>
+    <button class="modebtn" data-imode="text">
+      <b>B · Text prompt</b><span>Describe the centre scene and generate it. Nothing to upload.</span>
     </button>
 
   </div>
@@ -633,11 +633,11 @@
   </div><!-- /decodeSection -->
   </div>
   <div class="modepick" id="videoSourceMode">
-    <button class="modebtn" data-vmode="decoded">
-      <b>A · Decode a client clip</b><span>Upload the centre wall video. It is measured, matched against our C_ reference renders, and Apply writes that move into all three walls.</span>
-    </button>
     <button class="modebtn active" data-vmode="text">
-      <b>B · Pick a preset camera path</b><span>No clip. Choose one of the C_ rig moves measured from our own nDisplay renders, and Apply writes it into all three walls.</span>
+      <b>A · Pick a preset camera path</b><span>No clip. Choose one of the C_ rig moves measured from our own nDisplay renders, and Apply writes it into all three walls.</span>
+    </button>
+    <button class="modebtn" data-vmode="decoded">
+      <b>B · Decode a client clip</b><span>Upload the centre wall video. It is measured, matched against our C_ reference renders, and Apply writes that move into all three walls.</span>
     </button>
   </div>
   <div class="modehint" id="videoModeHint"></div>
@@ -1875,10 +1875,18 @@ function setPill(kind, id, status){
 // switch back, and nothing else needs to change.
 const DEFAULT_ASPECT = '16:9';
 
+// Never shown, on any panel, per the owner. is_inpaint and remove_bg are
+// refinement operations and do not belong in first-stage generation; width
+// and height duplicate aspect_ratio + resolution (every catalogue model that
+// has them also has both of those - checked). Not rendered means not sent:
+// readFields only reads fields that exist on the page.
+const HIDDEN_PARAMS = new Set(['is_inpaint', 'remove_bg', 'width', 'height']);
+
 async function renderFieldsFor(kind, id, jst){
   const schema = await loadModelSchema(jst);
   const container = document.getElementById(`${kind}fields-${id}`);
-  const fields = (schema.params || []).filter(p => p.name !== 'prompt' && !isMediaParam(p));
+  const fields = (schema.params || []).filter(p => p.name !== 'prompt' && !isMediaParam(p)
+                                               && !HIDDEN_PARAMS.has(p.name));
   container.innerHTML = fields.map(p => {
     // Image models default aspect_ratio to something like 1:1 or "auto" —
     // fine for a standalone image, wrong for a wall in a 16:9 video
@@ -3363,6 +3371,12 @@ const VIDEO_MODE_HINT = {
          + 'the one move.',
 };
 
+// v2: the options were reordered (image: upload first; video: preset first).
+// A pick stored under the old layout would hold everyone on whatever they last
+// clicked and the new defaults would never show, so the key moved.
+const MODE_KEY = 'triwall.mode.v2.';
+const MODE_DEFAULT = { image: 'image', video: 'text' };
+
 function setMode(group, value, persist){
   const wrap = document.getElementById(group === 'image' ? 'imageSourceMode' : 'videoSourceMode');
   const attr = group === 'image' ? 'imode' : 'vmode';
@@ -3378,8 +3392,11 @@ function setMode(group, value, persist){
   if (hintText) logNote(group === 'image' ? 'Image \u00b7 mode' : 'Video \u00b7 mode',
                         hintText, 'mode:' + group);
   if (group === 'image') {
-    // Option C is the only one that needs the decode slot.
     applyImageDisclosure(value);
+    // The server only lets the scene text steer a prompt while the Scene card
+    // is visible (sceneInUse in server.js), so it has to know which option is on.
+    api('/api/model-choice', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ imageSourceMode: value }) }).catch(() => {});
   } else {
     // Rig controls are a manual choice; with a decoded reference they are read
     // back from the measurement instead, so leave them visible but say so.
@@ -3394,7 +3411,7 @@ function setMode(group, value, persist){
     if (bar) bar.textContent = '';
     logNote('Video \u00b7 mode', barText, 'rigbarnote');
   }
-  if (persist) { try { localStorage.setItem('triwall.mode.' + group, value); } catch (e) {} }
+  if (persist) { try { localStorage.setItem(MODE_KEY + group, value); } catch (e) {} }
 }
 
 ['image','video'].forEach(group => {
@@ -3405,14 +3422,13 @@ function setMode(group, value, persist){
     if (b) setMode(group, b.dataset[group === 'image' ? 'imode' : 'vmode'], true);
   });
   let saved = null;
-  try { saved = localStorage.getItem('triwall.mode.' + group); } catch (e) {}
-  // Video now opens on B (pick a preset camera path). Decoding a client clip
-  // is the exception, not the routine case: most sets start from one of our
-  // own measured C_ moves, and opening on A put an upload slot in front of
-  // that every time. Note setMode's third argument: applying a default must
-  // not persist it, or this line could never change behaviour for anyone who
-  // had already opened the page once.
-  setMode(group, saved || 'text', false);
+  try { saved = localStorage.getItem(MODE_KEY + group); } catch (e) {}
+  // Both open on option A: image on "upload a centre image", video on "pick a
+  // preset camera path". Decoding a client clip is the exception, not the
+  // routine case. Note setMode's third argument: applying a default must not
+  // persist it, or this line could never change behaviour for anyone who had
+  // already opened the page once.
+  setMode(group, saved || MODE_DEFAULT[group], false);
 });
 
 // ================= CONNECTIONS =================
@@ -5440,7 +5456,7 @@ async function verifyBuild(){
       populateModelSelect(document.getElementById('videoModelSelect'), 'video'),
       populateModelSelect(document.getElementById('editModelSelect'), 'image'),
     ]);
-    preferDefault(document.getElementById('imageModelSelect'), imageModels, 'gpt_image_2');
+    preferDefault(document.getElementById('imageModelSelect'), imageModels, 'gpt_image_2_5');
     preferDefault(document.getElementById('videoModelSelect'), videoModels, 'seedance_2_5');
     preferDefault(document.getElementById('editModelSelect'), editModels, 'flux_kontext');
     const videoEditModels = populateVideoEditSelect(document.getElementById('videoEditModelSelect'), videoModels);

@@ -166,6 +166,10 @@ function defaultState() {
   });
   return {
     scene: '', imageModel: null, videoModel: null, editModel: null, videoEditModel: null,
+    // Which image option the page is on: 'image' (A, upload a centre) or
+    // 'text' (B, write the scene). Decides whether the scene text counts - see
+    // sceneInUse().
+    imageSourceMode: 'image',
     videoMotionMode: 'moving', videoCameraSpeedPct: 100, imageCompositionMode: 'distinct',
     // The rig spec replaces the old per-wall independent movement rules: ONE
     // physical camera intent that derives all three walls' locked blocks.
@@ -456,6 +460,12 @@ function loadImageSet(id){
 // centre's description is exactly what produced the image being approved —
 // only the sides are stale there.)
 function invalidateSceneForNewCentre(){
+  // The scene text described the OLD picture. It used to survive this, hidden
+  // (the Scene card is not shown in upload mode), and went on steering the
+  // writer: a living-room centre got a left wall drafted from "a billiards
+  // hall with dark wood walls", because the side-wall writer is handed the
+  // scene as an "overall scene note" alongside the new image.
+  state.scene = '';
   const c = state.walls.center;
   c.genImageUrl = null; c.genImageStatus = null; c.approvedImagePath = null;
   c.genVideoUrl = null; c.genVideoStatus = null;
@@ -675,6 +685,14 @@ async function runPromptBot(instruction, imagePath, opts){
 // so this writes only that — never the static scene (the image prompt already
 // covers it) and never camera movement (the locked block covers it, and the bot
 // is briefed on what that block says via promptBotRigContext).
+// THE SCENE TEXT ONLY COUNTS WHILE IT CAN BE SEEN. In upload mode (option A)
+// the Scene card is hidden, so whatever it still holds is invisible to the
+// operator - and an input nobody can see must not steer a prompt. Every writer
+// reads the scene through this.
+function sceneInUse(scene){
+  return state.imageSourceMode === 'text' ? (scene || '') : '';
+}
+
 function buildVideoInstruction(wall, currentPrompt, scene, imagePath, allImages){
   const NL = String.fromCharCode(10);
   const RIGSPEC = require('./rigspec.js');
@@ -790,7 +808,7 @@ async function draftVideoPrompt(wall, imagePath){
   const applied = LEARN.applyCalibration(state.calibration, state.rig || RIG.defaultRig());
   const locked = PRINCIPLES.buildLockedJson(wall, applied);
   return runPromptBot(
-    buildVideoInstruction(wall, st.videoPrompt || '', state.scene || '', imagePath, all),
+    buildVideoInstruction(wall, st.videoPrompt || '', sceneInUse(state.scene), imagePath, all),
     imagePath,
     { schema: VIDEO_SCENE_SCHEMA, assemble: (d) => sceneJsonFromDraft(d, locked) });
 }
@@ -1205,6 +1223,7 @@ const server = http.createServer(async (req, res) => {
       if (body.videoModel !== undefined) state.videoModel = body.videoModel;
       if (body.editModel !== undefined) state.editModel = body.editModel;
       if (body.videoEditModel !== undefined) state.videoEditModel = body.videoEditModel;
+      if (body.imageSourceMode === 'image' || body.imageSourceMode === 'text') state.imageSourceMode = body.imageSourceMode;
       if (body.videoMotionMode !== undefined) state.videoMotionMode = body.videoMotionMode;
       if (body.videoCameraSpeedPct !== undefined) state.videoCameraSpeedPct = body.videoCameraSpeedPct;
       if (body.imageCompositionMode !== undefined) {
@@ -1504,7 +1523,8 @@ const server = http.createServer(async (req, res) => {
     // wording below stays generic ("an AI image/video generator").
     if (req.method === 'POST' && p === '/api/improve-prompt') {
       const body = JSON.parse((await readBody(req)).toString('utf8'));
-      const { wall, mode, currentPrompt, scene, compositionMode } = body;
+      const { wall, mode, currentPrompt, compositionMode } = body;
+      const scene = sceneInUse(body.scene);
       let { imagePath } = body;
       if (!WALL_IDS.includes(wall) || !['image', 'video', 'edit', 'videoedit'].includes(mode)) return sendJson(res, 400, { error: 'bad wall/mode' });
 
