@@ -735,6 +735,92 @@ function cliPromptArg(prompt) {
        + String.fromCharCode(10) + String.fromCharCode(10) + s;
 }
 
+// ----------------------------------------------------- Higgsfield sign-in ---
+// SIGN-IN OPENS A BROWSER, NOT A CONSOLE.
+//
+// This used to shell out to `cmd /c start "Higgsfield sign-in" cmd /k "<path>
+// \hf.exe" auth login`. Two things wrong with that. It failed outright - the
+// quoted .exe path inside `start`'s own quoting came back as
+//   '"C:\...\hf.exe"' is not recognized as an internal or external command
+// because `start` reads the first quoted token as the WINDOW TITLE. And even
+// when it worked it was the wrong shape: a console window is not something an
+// operator should have to read, and the sign-in is a browser flow anyway.
+//
+// So the CLI runs here instead, with its output captured. It prints the
+// authorize URL and opens the browser itself; we keep the URL so the page can
+// offer it as a fallback link, and we watch the process for the result.
+//
+// AND IT SELECTS THE WORKSPACE. Signing in is only half the job: a fresh
+// account comes back with no workspace bound, and every generate call then
+// fails with `workspace_membership_required` while the tool cheerfully reports
+// itself signed in. That happened on a real account switch and looked exactly
+// like a broken login. When the account has exactly one workspace there is
+// nothing to choose, so it is chosen here.
+let hfLogin = null;
+
+function beginHiggsfieldLogin() {
+  if (hfLogin && hfLogin.status === 'pending') return hfLogin;
+  hfLogin = { status: 'pending', url: null, message: 'Starting sign-in…',
+              account: null, workspace: null, startedAt: Date.now() };
+  const me = hfLogin;
+  let buf = '';
+
+  const child = spawn(HIGGSFIELD_BIN, ['auth', 'login'],
+                      { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const scan = (chunk) => {
+    buf += String(chunk);
+    if (!me.url) {
+      const m = buf.match(/https:\/\/[^\s"']+/);
+      if (m) {
+        me.url = m[0];
+        me.message = 'Browser opened — approve the sign-in there.';
+      }
+    }
+  };
+  child.stdout.on('data', scan);
+  child.stderr.on('data', scan);
+  child.on('error', (e) => {
+    me.status = 'error';
+    me.message = 'Could not start the Higgsfield CLI: ' + e.message;
+  });
+  child.on('close', async (code) => {
+    if (me.status === 'error') return;
+    if (code !== 0) {
+      me.status = 'error';
+      me.message = buf.trim().split(String.fromCharCode(10)).filter(Boolean).slice(-1)[0]
+                   || ('Sign-in exited with code ' + code);
+      return;
+    }
+    me.message = 'Signed in. Checking workspace…';
+    try {
+      const raw = await runCli(HIGGSFIELD_BIN, ['workspace', 'list', '--json']);
+      let list = [];
+      try { const j = JSON.parse(raw); list = Array.isArray(j) ? j : (j.items || j.data || []); }
+      catch (e) { list = []; }
+      const selected = list.find(w => w.selected || w.is_selected);
+      if (!selected && list.length === 1) {
+        const id = list[0].id || list[0].workspace_id;
+        if (id) await runCli(HIGGSFIELD_BIN, ['workspace', 'set', String(id)]);
+      }
+      const st = await runCli(HIGGSFIELD_BIN, ['workspace', 'status']).catch(() => '');
+      me.workspace = String(st || '').trim().split(String.fromCharCode(10))[0] || null;
+      if (!me.workspace && list.length > 1) {
+        me.message = 'Signed in, but this account has ' + list.length + ' workspaces and none is '
+                   + 'selected. Pick one with: higgsfield workspace set <id>';
+      }
+    } catch (e) { /* a workspace we could not read is reported below, not fatal */ }
+    try {
+      const acc = await runCli(HIGGSFIELD_BIN, ['account', 'status']);
+      me.account = String(acc || '').trim().split(String.fromCharCode(10))[0] || null;
+    } catch (e) { /* the account line is cosmetic */ }
+    me.status = 'ok';
+    if (!/workspaces and none/.test(me.message)) {
+      me.message = 'Signed in' + (me.account ? ' as ' + me.account : '') + '.';
+    }
+  });
+  return hfLogin;
+}
+
 function runCli(binary, args, stdinInput){
   if (!cliQueues[binary]) cliQueues[binary] = { queue: [], running: false };
   return new Promise((resolve, reject) => {
@@ -2386,14 +2472,31 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       return sendJson(res, 200, r);
     }
 
-    // Hands sign-in to the vendor's own CLI in a terminal the person can see.
+    // Hands sign-in to the vendor's own CLI. Higgsfield runs in-process and
+    // goes straight to the browser (see beginHiggsfieldLogin); `claude` is an
+    // interactive REPL, so it still needs a terminal of its own.
+    //
     // This app never takes a password, key or token in any field, and never
     // reads one — the CLI writes its own session file under the user's home.
     if (req.method === 'POST' && p === '/api/auth/login') {
       const body = JSON.parse((await readBody(req)).toString('utf8'));
       const which = body.which === 'claude' ? 'claude' : 'higgsfield';
+      if (which === 'higgsfield') {
+        const st = beginHiggsfieldLogin();
+        return sendJson(res, 200, { ok: true, inBrowser: true, status: st.status,
+                                    url: st.url, note: st.message });
+      }
       const r = PRE.openLoginTerminal(which, { higgsfield: HIGGSFIELD_BIN });
       return sendJson(res, r.ok ? 200 : 500, r);
+    }
+
+    // Polled by the page while the browser tab is open.
+    if (req.method === 'GET' && p === '/api/auth/login-status') {
+      const st = hfLogin || { status: 'idle', message: 'No sign-in in progress.' };
+      return sendJson(res, 200, {
+        status: st.status, url: st.url || null, note: st.message || '',
+        account: st.account || null, workspace: st.workspace || null,
+      });
     }
 
     // ---- rig spec: one camera intent, all three walls derived from it ----

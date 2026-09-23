@@ -184,6 +184,24 @@ const SAFE_PX_PER_FRAME = 6;
 // them raises the benchmark to 0.1222. The owner asked for all six averaged.)
 const BENCHMARK_DX_RATE = 0.0848;   // frame widths per second at Speed = 100%
 
+// THE CENTRE RUNS AT A QUARTER OF THE REFERENCE RATIO. This is the standard,
+// not a starting point, and it is set from delivered output rather than from
+// the nDisplay render.
+//
+// The reference render pairs a side dx of 0.61 view widths with a centre scale
+// of x2.00, and holding that ratio is what the gesture model does by default.
+// The generator does not honour it: over three delivered sets the sides tracked
+// what they were asked while the centre overshot its scale by 3-9x, and the
+// centre's delivered rate barely moved with the ask at all. A set built on the
+// raw reference ratio therefore lands as a fast centre between two slow sides,
+// every time, whatever the speed dial says.
+//
+// 25 was arrived at from the wall, by the owner, watching stitched output - "the
+// centre should be about 75% slower to match the sides". An earlier 65 was still
+// visibly too fast. The Centre % box overrides it per scene; this is what it
+// starts at, and what a contract built without an explicit rig uses.
+const CENTRE_TRIM_DEFAULT = 25;     // percent, applied to the centre wall only
+
 // The theatre's own reference gesture runs much harder than that. This is the
 // side wall's rate in the SAME units, so SPEED_UNITY below is the honest
 // statement of how much gentler the operator's clips are: 100% on the dial is
@@ -218,6 +236,21 @@ function gestureFraction(speedPct, T) {
   const pct = (Number.isFinite(p) && p > 0 ? p : 100) / 100;
   return pct * BENCHMARK_DX_RATE * T / REF_SIDE_DX_TOTAL;
 }
+
+// HOW SMALL A SCALE CHANGE IS WORTH STATING, per wall.
+//
+// One flat 0.15 used to cover both, and trimming the centre exposed why that
+// is wrong. The centre's ONLY motion is scale - it is a dolly with dx = 0 - so
+// flattening a x1.117 push to "no size change" does not slow the centre down,
+// it switches the centre off, and the contract then actively says "no zoom, no
+// dolly, nothing gets bigger or smaller" on the one wall whose whole job is to
+// push. At 25% and 5 s that is exactly what happened.
+//
+// A side wall is the opposite case: its move is dx, its scale is incidental,
+// and a side wall that invents a zoom is a failure this project has measured
+// more than once (x0.58 against a contract that said 1.00). There the wide
+// deadzone is protection and it stays.
+function zoomDeadzone(wall) { return wall === 'center' ? 0.02 : 0.15; }
 
 function normalise(id) {
   if (id && MOVES[id]) return id;
@@ -279,7 +312,9 @@ function spec(moveId, wallId, durationSec, speedPct, centrePct) {
   // without touching the sides. It multiplies the gesture fraction, so it acts
   // on the centre's scale exponent and stays consistent at every duration.
   const cp = Number(centrePct);
-  const centreTrim = (w === 'center' && Number.isFinite(cp) && cp > 0) ? cp / 100 : 1;
+  const centreTrim = w === 'center'
+    ? ((Number.isFinite(cp) && cp > 0) ? cp : CENTRE_TRIM_DEFAULT) / 100
+    : 1;
   const g = gestureFraction(speedPct, T) * centreTrim;
   const dxTotal = raw.dx * conv * g;
   const dxRate = dxTotal / T;                       // frame-widths per second
@@ -477,7 +512,7 @@ function numericBlock(moveId, wallId, durationSec, speedPct, centrePct) {
 // frame right pushes the picture toward frame left. So the INSPECTOR prints
 // both readings side by side. This string is never sent to a generator.
 function cameraGloss(sp) {
-  const zooms = Math.abs(sp.scaleTotal - 1) >= 0.15;
+  const zooms = Math.abs(sp.scaleTotal - 1) >= zoomDeadzone(sp.wall);
 
   if (sp.kind === 'static') {
     return { camera: 'camera is locked off', picture: 'nothing moves', numbers: '' };
@@ -591,7 +626,7 @@ function compare(moveId, wallId, measured, speedPct, centrePct) {
 
   // Scale is compared in log space: x2.0 and x0.5 are the same size of error,
   // and a linear comparison would call one of them twice as bad as the other.
-  const scaleWanted = Math.abs(want.scaleTotal - 1) > 0.15;
+  const scaleWanted = Math.abs(want.scaleTotal - 1) > zoomDeadzone(want.wall);
   if (scaleWanted) {
     const lw = Math.log(want.scaleTotal);
     const lg = Math.log(Math.max(0.05, measured.scaleTotal));
@@ -751,7 +786,7 @@ function negativePrompt(sp) {
     n.push('no object travels across the picture on its own - the picture is what moves, and '
          + 'nothing changes its position within the scene');
   }
-  if (Math.abs(sp.scaleTotal - 1) < 0.15) {
+  if (Math.abs(sp.scaleTotal - 1) < zoomDeadzone(sp.wall)) {
     n.push('no zoom, no dolly, nothing gets bigger or smaller');
   }
   if (Math.abs(sp.dxTotal) < 0.02) n.push('no sideways drift, no pan');
@@ -777,8 +812,8 @@ function negativePrompt(sp) {
 // So size is now described only by what happens to the PICTURE: things get
 // bigger or smaller, and the frame shows less or more. Neither has a camera
 // reading.
-function sizeWords(scaleTotal) {
-  if (Math.abs(scaleTotal - 1) < 0.15) {
+function sizeWords(scaleTotal, deadzone) {
+  if (Math.abs(scaleTotal - 1) < (deadzone == null ? 0.15 : deadzone)) {
     return { change: 'none - everything stays exactly the size it is now', fov: 'unchanged' };
   }
   if (scaleTotal > 1) {
@@ -809,9 +844,9 @@ function sizeWords(scaleTotal) {
  */
 function cameraJson(moveId, wallId, durationSec, opts) {
   const sp = spec(moveId, wallId, durationSec, opts && opts.speedPct, opts && opts.centrePct);
-  const zooms = Math.abs(sp.scaleTotal - 1) >= 0.15;
+  const zooms = Math.abs(sp.scaleTotal - 1) >= zoomDeadzone(sp.wall);
   const scaleEnd = zooms ? sp.scaleTotal : 1.0;
-  const sz = sizeWords(scaleEnd);
+  const sz = sizeWords(scaleEnd, zoomDeadzone(sp.wall));
   const lm = landmarkRows(sp);
   const n = Math.max(2, Math.round(sp.durationSec));
 
@@ -903,7 +938,14 @@ function cameraJson(moveId, wallId, durationSec, opts) {
     };
   }
 
-  // THE RIGHT WALL KEEPS TRAVELLING THE SAME WAY AS THE LEFT ONE.
+  // CONFIRMED WORKING ON C_PushIn - DO NOT REWORD WITHOUT A MEASURED SET.
+  // The owner checked delivered output after this went in: "right motion is
+  // fixed, it's looking nice for push in." Three sets before it were wrong-way
+  // three times out of three. The wording below and the rig_context block are
+  // the only things that changed, so they are load-bearing until something
+  // measured says otherwise.
+  //
+  // THE RIGHT WALL USED TO TRAVEL THE SAME WAY AS THE LEFT ONE.
   //
   // Measured across three delivered sets (Snow, Toronto, Bear): the LEFT wall
   // obeyed its direction every time, and the RIGHT wall travelled the SAME way
@@ -961,7 +1003,7 @@ function cameraJson(moveId, wallId, durationSec, opts) {
   };
   for (const w of others) {
     const o = spec(sp.move, w, sp.durationSec, opts && opts.speedPct, opts && opts.centrePct);
-    const oz = Math.abs(o.scaleTotal - 1) >= 0.15;
+    const oz = Math.abs(o.scaleTotal - 1) >= zoomDeadzone(o.wall);
     out.rig_context[w] = {
       dx_total: o.dxTotal,
       travel: o.towardEdge ? 'toward its ' + o.towardEdge + ' edge' : 'no sideways travel',
