@@ -579,6 +579,7 @@ function defaultRig() {
   return {
     intent: 'C_PushIn',
     speedPct: 100,
+    centrePct: 25,     // rigspec.CENTRE_TRIM_DEFAULT - the centre runs a quarter pace
     yawDegPerSec: 6,
     tiltDegPerSec: 4,
     durationSec: 5,

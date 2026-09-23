@@ -467,7 +467,7 @@
     </div>
     <div class="f" id="rigCentreWrap">
       <label title="Trims the CENTRE wall only, on top of Speed %. The centre does not obey the speed dial the way the sides do - measured over three delivered sets it overshot its scale by 3-9x while the sides tracked what they were asked - so one dial cannot make both look right. 100% keeps the reference ratio between centre and sides; lower slows the centre without touching the sides.">Centre %</label>
-      <input type="number" id="rigCentre" value="100" min="1" max="400" step="5">
+      <input type="number" id="rigCentre" value="25" min="1" max="400" step="5">
     </div>
     <div class="f" id="rigYawWrap" style="display:none;">
       <label>Yaw °/sec</label>
@@ -2506,9 +2506,35 @@ Run this yourself in a terminal:
   const login = e.target.closest('[data-login]');
   if (!login) return;
   login.disabled = true;
+  const wasLabel = login.textContent;
   try {
     const r = await api('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ which: login.dataset.login }) });
+    // HIGGSFIELD SIGNS IN IN THE BROWSER, NOT IN A CONSOLE. The server runs the
+    // CLI itself and watches it, so the button waits here instead of telling the
+    // operator to go and read a terminal window. Claude still needs one — it is
+    // an interactive REPL — so that path keeps the old message.
+    if (r.inBrowser) {
+      login.textContent = 'Waiting for browser…';
+      const started = Date.now();
+      for (;;) {
+        await new Promise(done => setTimeout(done, 1500));
+        let st;
+        try { st = await api('/api/auth/login-status'); } catch (e) { break; }
+        if (st.status === 'ok') {
+          alert(st.note + (st.workspace ? '\nWorkspace: ' + st.workspace : ''));
+          break;
+        }
+        if (st.status === 'error') { alert('Sign-in failed: ' + st.note); break; }
+        if (Date.now() - started > 4 * 60 * 1000) {
+          alert('Still waiting for the browser after four minutes. '
+                + (st.url ? 'Open this to finish:\n\n' + st.url : 'Try Sign in again.'));
+          break;
+        }
+      }
+      await loadPreflight();
+      return;
+    }
     alert(r.note || `Run this yourself in a terminal:\n\n${r.cmd}`);
   } catch (err) {
     // Was: "Run this yourself:" + err.message — which pasted the ERROR into the
@@ -2517,7 +2543,7 @@ Run this yourself in a terminal:
     alert(err.serverDown
       ? err.message
       : `Could not open a terminal automatically (${err.message}).\n\nRun this yourself:\n\n  ${cmd}`);
-  } finally { login.disabled = false; }
+  } finally { login.disabled = false; login.textContent = wasLabel; }
 });
 
 // ================= CAMERA RIG =================
@@ -2562,7 +2588,7 @@ function readRigFromForm(){
   return {
     intent: el('rigIntent').value,
     speedPct: Math.max(1, parseFloat(el('rigSpeed').value) || 100),
-    centrePct: Math.max(1, parseFloat(el('rigCentre').value) || 100),
+    centrePct: Math.max(1, parseFloat(el('rigCentre').value) || 25),
     yawDegPerSec: Math.max(0.1, parseFloat(el('rigYaw').value) || 6),
     tiltDegPerSec: Math.max(0.1, parseFloat(el('rigTilt').value) || 4),
     durationSec: Math.max(1, parseInt(el('rigDuration').value, 10) || 5),
@@ -2582,7 +2608,7 @@ function writeRigToForm(rig){
   const el = id => document.getElementById(id);
   el('rigIntent').value = RIGMOVE_NORMALISE(rig.intent);
   el('rigSpeed').value = rig.speedPct ?? 100;
-  el('rigCentre').value = rig.centrePct ?? 100;
+  el('rigCentre').value = rig.centrePct ?? 25;
   el('rigYaw').value = rig.yawDegPerSec ?? 6;
   el('rigTilt').value = rig.tiltDegPerSec ?? 4;
   el('rigDuration').value = rig.durationSec ?? 5;
