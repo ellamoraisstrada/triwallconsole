@@ -41,13 +41,78 @@ function stub(name) {
   });
 }
 
+// ---- just enough real DOM for buildTabs() ---------------------------------
+// buildTabs walks the top-level children of .wrap in order and assigns each to a
+// tab. A stub with no children makes it fail every time, which means the stub
+// can never tell a broken tab layout from a working one - and a broken tab
+// layout is exactly what shipped. So the top-level children are parsed out of
+// the real HTML and given just enough behaviour for that walk to run.
+function parseTopLevel(html) {
+  const start = html.indexOf('<div class="wrap"');
+  if (start < 0) return [];
+  const open = html.indexOf('>', start) + 1;
+  const VOID = new Set(['br','img','input','hr','meta','link','source','track','area','base','col','embed','param','wbr']);
+  const tag = /<(\/?)(\w+)([^>]*)>/g;
+  tag.lastIndex = open;
+  let depth = 1, m;
+  const out = [];
+  while ((m = tag.exec(html))) {
+    const [, slash, name, attrs] = m;
+    if (VOID.has(name) || attrs.endsWith('/')) continue;
+    if (!slash) {
+      if (depth === 1) {
+        out.push({ id: (attrs.match(/id="([^"]+)"/) || [])[1] || '',
+                   cls: (attrs.match(/class="([^"]+)"/) || [])[1] || '' });
+      }
+      depth++;
+    } else if (--depth === 0) break;
+  }
+  return out;
+}
+function el(id, cls) {
+  const node = {
+    id: id || '', hidden: false, style: {}, dataset: {}, type: '', textContent: '',
+    className: cls || '',
+    classList: {
+      _s: new Set((cls || '').split(/\s+/).filter(Boolean)),
+      contains(c) { return this._s.has(c); },
+      add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
+      toggle(c, on) { if (on) this._s.add(c); else this._s.delete(c); },
+    },
+    children: [], parentNode: null,
+    appendChild(c) { c.parentNode = this; this.children.push(c); return c; },
+    insertAdjacentElement(_pos, c) { c.parentNode = this; return c; },
+    insertAdjacentHTML() {},
+    addEventListener() {}, removeEventListener() {},
+    querySelector(sel) { return stub('el.querySelector(' + sel + ')'); },
+    querySelectorAll() { return []; },
+    prepend() {}, before() {}, after() {}, replaceWith() {}, closest() { return null; },
+    setAttribute() {}, getAttribute() { return null; }, remove() {},
+    focus() {}, click() {}, scrollIntoView() {},
+  };
+  return node;
+}
+
 const store = {};
+// The page catches a failed tab build and only console.errors it, so the page
+// still "loads" while collapsing into one scroll. That is exactly what shipped,
+// so the message is treated as a failure here rather than noise.
+const errors = [];
+const tapConsole = Object.create(console);
+tapConsole.error = (...a) => { errors.push(a.map(String).join(' ')); };
+tapConsole.warn = () => {};
+
 const sandbox = {
-  console,
+  console: tapConsole,
   setTimeout, clearTimeout, setInterval, clearInterval,
   Promise, JSON, Math, Date, Object, Array, String, Number, Boolean, RegExp,
   Error, TypeError, Map, Set, WeakMap, isNaN, parseInt, parseFloat, encodeURIComponent,
   decodeURIComponent, URL, Intl,
+  sessionStorage: {
+    getItem: k => (k in store ? store['s:' + k] || null : null),
+    setItem: (k, v) => { store['s:' + k] = String(v); },
+    removeItem: k => { delete store['s:' + k]; },
+  },
   localStorage: {
     getItem: k => (k in store ? store[k] : null),
     setItem: (k, v) => { store[k] = String(v); },
@@ -63,9 +128,13 @@ const sandbox = {
   location: { href: 'http://localhost:8934/', search: '', hash: '', reload: () => {} },
   history: stub('history'),
   alert: () => {}, confirm: () => true, prompt: () => '',
+  scrollTo: () => {}, scrollBy: () => {}, getComputedStyle: () => ({}),
+  matchMedia: () => ({ matches: false, addEventListener: () => {} }),
   document: new Proxy({}, {
     get(t, k) {
       if (k === 'documentElement' || k === 'body' || k === 'head') return stub('document.' + String(k));
+      if (k === 'querySelector') return sel => (sel === '.wrap' ? WRAP : stub('qs(' + sel + ')'));
+      if (k === 'createElement') return () => el('', '');
       if (k === 'querySelectorAll') return () => [];
       // Every id resolves to a stub rather than null. Returning null is the
       // honest browser answer for ids that are absent, but it stops the script
@@ -83,11 +152,19 @@ sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
 sandbox.self = sandbox;
 
+const WRAP = el('', 'wrap');
+parseTopLevel(html).forEach(c => WRAP.appendChild(el(c.id, c.cls)));
+
 let failed = false;
 try {
   vm.createContext(sandbox);
   new vm.Script(m[1], { filename: file }).runInContext(sandbox, { timeout: 15000 });
   console.log('  script ran to completion with no load-time exception');
+  const tab = errors.find(e => /tab layout failed/.test(e));
+  if (tab) { failed = true; console.log('  TAB LAYOUT BROKEN: ' + tab); }
+  else { console.log('  tab layout built'); }
+  errors.filter(e => !/tab layout failed/.test(e)).slice(0, 4)
+        .forEach(e => console.log('  (console.error) ' + e.slice(0, 120)));
 } catch (e) {
   failed = true;
   console.log('  LOAD-TIME EXCEPTION: ' + e.message);

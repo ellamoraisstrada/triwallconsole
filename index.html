@@ -509,14 +509,34 @@ td.winspan.bad { color:var(--danger); }
     </p>
   </div>
 
-  <div class="setup" id="imageModelRow">
+  <div class="setup" id="sceneRow">
+    <div class="card" id="sceneCard">
+      <h2>Scene <span class="sub">describe the centre wall — option B only</span></h2>
+      <textarea id="sceneInput" placeholder="Describe the CENTRE wall: what is in it, the lighting, the mood. Save scene makes this the centre's image prompt — then press Generate on the centre card below. Left and right are drafted from the finished centre, not from this text."></textarea>
+      <div class="actions">
+        <button class="btn small" id="saveSceneBtn" title="Makes this text the CENTRE wall's image prompt, then press Generate on the centre card below. Left and right are cleared — draft those from the finished centre image.">Save scene</button>
+        <button class="btn ghost small" id="syncBtn" title="Pull the scene and prompts Claude already wrote in the /tri-wall chat, instead of typing them here">Sync from chat</button>
+      </div>
+      <div class="statusline" id="syncStatus"></div>
+      <!-- A centre reference-image dropzone stood here. It had no JavaScript
+           wired to it at all - nothing read refdz-center or reffile-center -
+           and it lived inside the Scene card, which only shows under option B,
+           where the centre is generated ENTIRELY from the text. So it offered an
+           upload that did nothing and contradicted the option it appeared in.
+           Option A uploads through the centre wall card's own dropzone
+           (imgfile-center), which is the live path. -->
+    </div>
+    <div class="card" id="scenePreviewCard" style="display:none;">
+      <h2>Centre wall <span class="sub">what option B is building</span></h2>
+      <div id="scenePreview"></div>
+      <div class="statusline" id="scenePreviewNote"></div>
+    </div>
     <div class="card">
       <h2>Image model <span class="sub">reference frames</span></h2>
       <select id="imageModelSelect"></select>
       <div class="statusline" id="imageModelStatus"></div>
     </div>
   </div>
-
   <div class="setup" id="videoModelRow">
     <div class="card">
       <h2>Video model <span class="sub">all three walls</span></h2>
@@ -556,33 +576,6 @@ td.winspan.bad { color:var(--danger); }
 
   </div>
   <div class="modehint" id="imageModeHint"></div>
-  <!-- The Scene card opens HERE, directly under the A/B buttons, because it is
-       what option B reveals. It used to live in the setup row above the section
-       head, so clicking "B - Text prompt" made a panel appear further up the
-       page than the button that had just been pressed. -->
-  <div class="setup" id="sceneRow">
-    <div class="card" id="sceneCard">
-      <h2>Scene <span class="sub">describe the centre wall — option B only</span></h2>
-      <textarea id="sceneInput" placeholder="Describe the CENTRE wall: what is in it, the lighting, the mood. Save scene makes this the centre's image prompt — then press Generate on the centre card below. Left and right are drafted from the finished centre, not from this text."></textarea>
-      <div class="actions">
-        <button class="btn small" id="saveSceneBtn" title="Makes this text the CENTRE wall's image prompt, then press Generate on the centre card below. Left and right are cleared — draft those from the finished centre image.">Save scene</button>
-        <button class="btn ghost small" id="syncBtn" title="Pull the scene and prompts Claude already wrote in the /tri-wall chat, instead of typing them here">Sync from chat</button>
-      </div>
-      <div class="statusline" id="syncStatus"></div>
-      <!-- A centre reference-image dropzone stood here. It had no JavaScript
-           wired to it at all - nothing read refdz-center or reffile-center -
-           and it lived inside the Scene card, which only shows under option B,
-           where the centre is generated ENTIRELY from the text. So it offered an
-           upload that did nothing and contradicted the option it appeared in.
-           Option A uploads through the centre wall card's own dropzone
-           (imgfile-center), which is the live path. -->
-    </div>
-    <div class="card" id="scenePreviewCard" style="display:none;">
-      <h2>Centre wall <span class="sub">what option B is building</span></h2>
-      <div id="scenePreview"></div>
-      <div class="statusline" id="scenePreviewNote"></div>
-    </div>
-  </div>
   <div class="statusline" id="genLeftRightStatus"></div>
   <div class="cols3" id="imageWalls"></div>
 
@@ -2889,6 +2882,24 @@ function buildTabs(){
   wirePlayer();
 
   showTab(sessionStorage.getItem('triwall_tab') || 'login');
+}
+
+// Put the Scene card and its preview directly beneath the image A/B buttons.
+// Called once, after buildTabs(). The two cards start life inside #sceneRow, up
+// in the setup area, because that is the order the tab assignment depends on;
+// this lifts them into their own row below #imageModeHint, leaving the Image
+// model select behind in the original row where it belongs.
+function placeSceneCard(){
+  const hint = document.getElementById('imageModeHint');
+  const card = document.getElementById('sceneCard');
+  const prev = document.getElementById('scenePreviewCard');
+  if (!hint || !card || !hint.parentNode) return;
+  const row = document.createElement('div');
+  row.className = 'setup';
+  row.id = 'sceneRowPlaced';
+  row.appendChild(card);
+  if (prev) row.appendChild(prev);
+  hint.insertAdjacentElement('afterend', row);
 }
 
 function showTab(id){
@@ -5462,6 +5473,18 @@ async function verifyBuild(){
   // fills in progressively inside it instead of before it.
   try { buildTabs(); } catch (e) {
     console.error('tab layout failed, leaving the page as one scroll:', e);
+  }
+  // THE SCENE CARD MOVES AFTER THE TABS ARE BUILT, NEVER BEFORE.
+  //
+  // It belongs visually under the A/B buttons - it is what option B reveals -
+  // but buildTabs() assigns every top-level child of .wrap to a tab by walking
+  // them IN ORDER and switching whenever it meets an anchor id. Moving it in the
+  // markup changed that walk and the whole tab layout collapsed into one scroll.
+  // Doing it here leaves the walk identical to what it has always been: by this
+  // point every section is already in its panel, and this only reorders two
+  // cards inside the Image panel.
+  try { placeSceneCard(); } catch (e) {
+    console.error('could not move the scene card under the mode buttons:', e);
   }
   verifyBuild();
   // Kicked off before anything that shells out to a CLI. Nothing below needs
