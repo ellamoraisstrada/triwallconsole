@@ -121,11 +121,135 @@ def measure(path, max_frames=900):
     }
 
 
+def strip_spread(path, n=4, axis='rows'):
+    """Shift measured in independent strips, and the spread between them.
+
+    axis='rows'  -> horizontal strips, top to bottom. Catches a layer sliding:
+                    the ground running away from the sky. The reference clip
+                    (ClaudeLearning_RightWall.mp4) reads 3.9%; delivered walls
+                    that slid read 59-82%.
+    axis='cols'  -> vertical strips, left to right. Catches a PAN: a camera that
+                    turns compresses one side of the frame and fans the other, so
+                    the shift differs by column. The reference reads 16.3% - the
+                    mild, real parallax of a viewpoint actually travelling - so
+                    the threshold sits well above that.
+    """
+    cap = cv2.VideoCapture(path)
+    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    ok, prev = cap.read()
+    if not ok:
+        cap.release()
+        return None, None
+    prevg = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
+    acc = [0.0] * n
+    seen = [0] * n
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        g = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
+        for b in range(n):
+            if axis == 'rows':
+                y0, y1 = int(H * b / n), int(H * (b + 1) / n)
+                a, c = prevg[y0:y1], g[y0:y1]
+            else:
+                x0, x1 = int(W * b / n), int(W * (b + 1) / n)
+                a, c = prevg[:, x0:x1], g[:, x0:x1]
+            try:
+                (dx, _dy), resp = cv2.phaseCorrelate(a.astype(np.float32), c.astype(np.float32))
+            except cv2.error:
+                continue
+            # A featureless strip gives a meaningless shift with a low response;
+            # counting it would invent a spread that is not there.
+            if resp > 0.03:
+                acc[b] += dx
+                seen[b] += 1
+        prevg = g
+    cap.release()
+    vals = [round(acc[b] / W, 4) for b in range(n) if seen[b]]
+    if len(vals) < 2:
+        return None, None
+    biggest = max(abs(v) for v in vals)
+    if biggest < 0.01:
+        return vals, 0.0
+    return vals, round((max(vals) - min(vals)) / biggest, 3)
+
+
+def band_spread(path, bands=4):
+    """Is the picture moving as ONE sheet, or is a layer sliding inside it?
+
+    bgRatio answers "does the dominant motion cover most of the frame", and a
+    clip can score 0.909 on that while its ground plane slides over its sky -
+    which is exactly what the owner reported and what bgRatio missed. So measure
+    dx independently in horizontal bands and report the spread between them.
+
+    Rigid camera move  -> every band the same number. L_bear.mp4, which the owner
+                          called correct, reads -0.133 / -0.135 / -0.136 / -0.136,
+                          a spread of 3%.
+    Sliding floor      -> the bottom band runs away from the top. A delivered left
+                          wall read -0.090 / -0.094 / -0.210 / -0.508: 82%.
+
+    Returns the per-band dx (fractions of frame width, over the whole clip) and
+    the spread as a fraction of the largest band.
+    """
+    cap = cv2.VideoCapture(path)
+    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    ok, prev = cap.read()
+    if not ok:
+        cap.release()
+        return None, None
+    prevg = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
+    acc = [0.0] * bands
+    seen = [0] * bands
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        g = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
+        for b in range(bands):
+            y0, y1 = int(H * b / bands), int(H * (b + 1) / bands)
+            a = prevg[y0:y1].astype(np.float32)
+            c = g[y0:y1].astype(np.float32)
+            try:
+                (dx, _dy), resp = cv2.phaseCorrelate(a, c)
+            except cv2.error:
+                continue
+            # A featureless band (flat sky) gives a meaningless shift with a low
+            # response; counting it would invent a spread that is not there.
+            if resp > 0.03:
+                acc[b] += dx
+                seen[b] += 1
+        prevg = g
+    cap.release()
+    vals = [round(acc[b] / W, 4) for b in range(bands) if seen[b]]
+    if len(vals) < 2:
+        return None, None
+    biggest = max(abs(v) for v in vals)
+    if biggest < 0.01:            # nothing moved; a spread here is noise
+        return vals, 0.0
+    return vals, round((max(vals) - min(vals)) / biggest, 3)
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({'error': 'usage: wall_motion.py <clip>'}))
         sys.exit(1)
-    print(json.dumps(measure(sys.argv[1])))
+    out = measure(sys.argv[1])
+    # The layer-separation test. Reported alongside bgRatio because the two ask
+    # different questions and a clip can pass one while failing the other.
+    try:
+        bands, spread = strip_spread(sys.argv[1], 4, 'rows')
+        out['bandDx'] = bands
+        out['bandSpread'] = spread
+        cols, cspread = strip_spread(sys.argv[1], 5, 'cols')
+        out['colDx'] = cols
+        out['colSpread'] = cspread
+    except Exception:
+        out['bandDx'] = out['bandSpread'] = None
+        out['colDx'] = out['colSpread'] = None
+    print(json.dumps(out))
 
 
 if __name__ == '__main__':

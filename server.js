@@ -137,6 +137,13 @@ async function resolveWallLocalImagePath(wall){
 async function resolveWallLocalVideoPath(wall){
   const u = state.walls[wall].genVideoUrl;
   if (!u) return null;
+  // A mirrored wall's finished clip is flipped and served from here, so its url
+  // is a local /uploads path and there is nothing to download. new URL() throws
+  // on it, which would have made every refinement of the right wall fail.
+  if (u.startsWith('/uploads/') || u.startsWith('/outputs/')) {
+    const local = path.join(APP_DIR, u.replace(/^\//, ''));
+    return fs.existsSync(local) ? local : null;
+  }
   const ext = path.extname(new URL(u).pathname) || '.mp4';
   const dest = path.join(UPLOADS_DIR, `${wall}-vidcurrent-${Date.now()}${ext}`);
   await downloadFile(u, dest);
@@ -232,6 +239,31 @@ async function modelSchema(jst) {
   MODEL_SCHEMA_CACHE.set(jst, parsed);
   return parsed;
 }
+
+// NOTHING IS FLIPPED ON ITS WAY TO OR FROM HIGGSFIELD. The right wall was
+// briefly generated on a horizontally flipped plate and flipped back on return,
+// which did produce the correct move - but it reverses text, signage and any
+// asymmetric subject in the frame, so it is not something a pipeline can be
+// built on. The plate goes up exactly as made and the clip is served exactly as
+// returned. The right wall is corrected by ONE NUMBER instead: see ASK_SIGN in
+// rigspec.js.
+
+// NO AUTOMATIC END FRAME. A start/end pair was briefly built for the side walls
+// from the plate translated by the contract's dx. It does produce an exact rigid
+// move - measured +0.4240 asked, +0.4240 in every horizontal band - but the
+// translation uncovers a strip at the trailing edge with no source pixels, and
+// make_end_frame.py fills it by mirroring and blurring the adjacent strip. At the
+// current dial that strip is 42% of the frame, so the target frame handed to the
+// model is nearly half smeared edge pixels, and the render follows it there.
+//
+// The owner's call, and it is the right one: the camera should move and the model
+// should DRAW what comes into frame, not be handed a stretched copy of what was
+// already there. So the band at the incoming edge is newly generated scene, and
+// the requirement is carried by the contract instead - see `rigid` in rigspec.js,
+// which now forbids stretching and smearing as explicitly as it forbids sliding.
+//
+// /api/build-end-frame still exists as a deliberate, manual lever for a wall that
+// will not move at all. Nothing reaches it unless the operator presses it.
 
 const LIBRARY_MAX = 500;
 
@@ -1458,6 +1490,12 @@ const server = http.createServer(async (req, res) => {
               extraImagePaths } = body;
       if (!WALL_IDS.includes(wall) || !['image', 'video'].includes(mode)) return sendJson(res, 400, { error: 'bad wall/mode' });
 
+      // NO ORDERING LOCK. A left-first guard lived here briefly; the owner's
+      // correction is that the left wall is the reference for the camera-movement
+      // NUMBERS, not for the video generations. rigspec derives right = left x -1
+      // in the matrix, which is where that reference belongs - the three jobs
+      // themselves stay independent and can be generated in any order.
+
       // HARD GUARD — a side wall is defined as a continuation of the centre, so
       // generating one with no centre reference is never a valid job. Without
       // this the CLI was called with no --image at all: the model got the
@@ -1908,9 +1946,17 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
         if (!url) { out.walls[w] = { error: 'no generated clip on this wall yet' }; continue; }
         let local = null;
         try {
-          const ext = path.extname(new URL(url).pathname) || '.mp4';
-          local = path.join(UPLOADS_DIR, w + '-verify-' + Date.now() + ext);
-          await downloadFile(url, local);
+              // An un-mirrored clip is served from here, not from the CDN, so the
+          // verifier has to measure the local file - and it must, because the
+          // CDN copy is the mirrored one and would grade backwards.
+          if (url.startsWith('/uploads/')) {
+            local = path.join(APP_DIR, url.replace(/^\//, ''));
+            if (!fs.existsSync(local)) throw new Error('flipped clip is missing from uploads');
+          } else {
+            const ext = path.extname(new URL(url).pathname) || '.mp4';
+            local = path.join(UPLOADS_DIR, w + '-verify-' + Date.now() + ext);
+            await downloadFile(url, local);
+          }
         } catch (e) { out.walls[w] = { error: 'could not download: ' + e.message }; continue; }
         try {
           out.walls[w] = await runVerify(local);
@@ -1990,6 +2036,16 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
           + 'spent the motion on the object and left the plate nearly still. Test the camera on its '
           + 'own first - remove the element, get the move measuring right, then put it back.');
       }
+      // THE DIAL RAN PAST WHAT THE MOVE IS. Say it at set level, once, with the
+      // number that would have fitted - a clamp the operator cannot see is a
+      // dial that has silently stopped doing anything.
+      const clampRow = cmp.map(r => r.want).find(x => x && x.gestureClamped);
+      if (clampRow) {
+        out.notes.push('The speed dial asked for ' + clampRow.gestureAsked + ' times the reference '
+          + 'gesture and was held to one. Over a ' + clampRow.durationSec + 's clip, '
+          + clampRow.speedPctUsable + '% is the most this move can use - above that the ask is '
+          + 'wider than the frame, and a wall given an ask it cannot draw substitutes a dolly.');
+      }
       out.pace = RIGSPEC.paceMatch(cmp, out.centrePct);
       if (out.pace && !out.pace.matched) out.notes.push(out.pace.note);
 
@@ -2034,7 +2090,7 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
       const sp = RIGSPEC.spec(moveId, wall, applied.durationSec || 5);
       // THE END FRAME IS BUILT FROM THE ROOM'S FIGURES, NOT FROM THE ASK.
       // On the right wall the contract deliberately asks for the reverse of what
-      // the room wants, because the generator reverses it (see DELIVERY_SIGN in
+      // the room wants, because the generator reverses it (see ASK_SIGN in
       // rigspec.js). Nothing reverses an end frame: it is a real image warped by
       // a real amount and handed over as an interpolation target. Feeding it the
       // inverted ask would warp the plate backwards and break the one lever that

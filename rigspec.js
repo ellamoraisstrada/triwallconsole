@@ -84,121 +84,138 @@ const WALL_H = { left: 1600, center: 1920, right: 1600 };
 // between the two sides is scene content (the right side of this particular
 // room has nearer objects), not rig behaviour. Raw readings sit in the comment
 // beside each line so nothing is hidden.
+// ------------------------------------------------- ONE NUMBER PER MOVE ------
+// THE LEFT WALL DEFINES THE MOVE; EVERY OTHER WALL IS A SIGNED MULTIPLE OF IT.
+//
+// These used to be three hand-written dx figures per move, which is three
+// chances to typo a sign and no statement anywhere of the relationship between
+// them. The relationship is the whole point, so it is written once, in code:
+//
+//   A DOLLY (push in / push out) mirrors the side walls. Travelling forward,
+//   the left wall's world streams toward its LEFT edge and the right wall's
+//   toward its RIGHT - equal and opposite, because the two walls face each
+//   other. right = -left, always, by construction.
+//
+//   A TRUCK (the whole rig sliding sideways) does NOT mirror them. Both sides
+//   stream the same way; what differs is that one wall approaches and grows
+//   while the other recedes and shrinks. So those keep an explicit pair.
+//
+// Checked at load against the owner's stitched reference (C_PushIn.mp4 /
+// C_PushOut.mp4 split into thirds, borders cropped) - see assertMatrix below.
+// A sign that drifts out of this file now fails at startup instead of in a
+// delivered clip.
+const SIDE_MIRROR = -1;
+
+function dollyWalls(leftDx, sideScale, centreScale) {
+  return {
+    left:   { dx: leftDx,                dy: 0, scale: sideScale,   roll: 0 },
+    center: { dx: 0,                     dy: 0, scale: centreScale, roll: 0 },
+    right:  { dx: leftDx * SIDE_MIRROR,  dy: 0, scale: sideScale,   roll: 0 },
+  };
+}
+function truckWalls(dx, leftScale, centreScale, rightScale) {
+  return {
+    left:   { dx: dx, dy: 0, scale: leftScale,   roll: 0 },
+    center: { dx: dx * (0.59 / 0.40), dy: 0, scale: centreScale, roll: 0 },
+    right:  { dx: dx, dy: 0, scale: rightScale,  roll: 0 },
+  };
+}
+
 const MOVES = {
-  // RIGHT WALL DIRECTION: OWNER-CONFIRMED TWICE, FROM DELIVERED OUTPUT.
-  // 2026-09-23, first after the direction rewrite ("right motion is fixed, it's
-  // looking nice for push in"), then again off a later clip that travelled
-  // toward frame RIGHT (measured dx +0.083 over 5.04s): "this is a good
-  // generation for C_PushIn ... make sure the camera motion for right wall does
-  // what it's doing right now when C_PushIn is selected."
-  //
-  // The table below ALREADY says that - right: dx +0.61, i.e. toward frame
-  // RIGHT, toward the outer end of the room - so nothing here needed changing;
-  // it is recorded so that it does not get "fixed" later. The amplitude is a
-  // separate question and is NOT taken from that clip: +0.083 is 19% of the
-  // 0.428 the contract asked for, and shrinking the preset to match a delivery
-  // that undershot would bake the undershoot in permanently.
   C_PushIn: {
     label: 'C_PushIn — the rig travels forward into the room',
     refClip: 'C_PushIn.mp4', refDur: 1.93,
     kind: 'dolly', sign: +1,
-    walls: {
-      // raw: L dx -0.607 scale 1.07 | R dx +0.643 scale 1.24
-      left:   { dx: -0.61, dy: 0, scale: 1.10, roll: 0 },
-      center: { dx:  0.00, dy: 0, scale: 2.00, roll: 0 },   // raw 2.01
-      right:  { dx: +0.61, dy: 0, scale: 1.10, roll: 0 },
-    },
+    // stitch: left -0.6097, centre x2.0119, right +0.6439
+    walls: dollyWalls(-0.61, 1.10, 2.00),
   },
-  // AND C_PushOut IS ITS EXACT REVERSE, which is what the table says (left
-  // +0.61, right -0.61 - each side mirrored against push-in) and what the owner
-  // asked for: "C_PushOut should be the opposite of how the camera is moving."
-  // The RIGHT wall has not delivered it yet. Three measured attempts, all
-  // travelling toward frame RIGHT when asked for LEFT: +0.233, then +0.083
-  // after direction_check replaced the depth-based wording. The rewrite took the
-  // wrong-way magnitude down but did not turn it round, so prompting is not the
-  // lever here - compare() now points at Lock motion for a wrong-way wall, the
-  // same advice it already gave for one that barely moves.
   C_PushOut: {
     label: 'C_PushOut — the rig withdraws backward out of the room',
     refClip: 'C_PushOut.mp4', refDur: 1.83,
     kind: 'dolly', sign: -1,
-    walls: {
-      // raw: L dx +0.571 scale 0.93 | R dx -0.600 scale 0.81
-      left:   { dx: +0.61, dy: 0, scale: 0.91, roll: 0 },
-      center: { dx:  0.00, dy: 0, scale: 0.50, roll: 0 },   // raw 0.51
-      right:  { dx: -0.61, dy: 0, scale: 0.91, roll: 0 },
-    },
+    // stitch: left +0.5799, centre x0.5128, right -0.6067
+    walls: dollyWalls(+0.61, 0.91, 0.50),
   },
   C_TrackLeft: {
     label: 'C_TrackLeft — the whole rig slides to its left, still facing forward',
     refClip: 'C_TrackLeft.mp4', refDur: 1.60,
     kind: 'truck', sign: +1,
-    walls: {
-      // raw: L dx +0.397 scale 2.16 | C dx +0.588 scale 1.01 | R dx +0.396 scale 0.41
-      left:   { dx: +0.40, dy: 0, scale: 2.30, roll: 0 },   // approaching -> grows
-      center: { dx: +0.59, dy: 0, scale: 1.00, roll: 0 },   // pure slide, no zoom
-      right:  { dx: +0.40, dy: 0, scale: 0.435, roll: 0 },  // receding -> shrinks
-    },
+    // raw: L dx +0.397 scale 2.16 | C dx +0.588 scale 1.01 | R dx +0.396 scale 0.41
+    walls: truckWalls(+0.40, 2.30, 1.00, 0.435),
   },
   C_TrackRight: {
     label: 'C_TrackRight — the whole rig slides to its right, still facing forward',
     refClip: 'C_TrackRight.mp4', refDur: 1.70,
     kind: 'truck', sign: -1,
-    walls: {
-      // raw: L dx -0.396 scale 0.46 | C dx -0.624 scale 0.98 | R dx -0.434 scale 2.60
-      left:   { dx: -0.40, dy: 0, scale: 0.435, roll: 0 },
-      center: { dx: -0.59, dy: 0, scale: 1.00, roll: 0 },
-      right:  { dx: -0.40, dy: 0, scale: 2.30, roll: 0 },
-    },
+    walls: truckWalls(-0.40, 0.435, 1.00, 2.30),
   },
   C_Hold: {
     label: 'C_Hold — the rig is locked off',
     refClip: null, refDur: 0,
     kind: 'static', sign: 0,
-    walls: {
-      left:   { dx: 0, dy: 0, scale: 1, roll: 0 },
-      center: { dx: 0, dy: 0, scale: 1, roll: 0 },
-      right:  { dx: 0, dy: 0, scale: 1, roll: 0 },
-    },
+    walls: dollyWalls(0, 1, 1),
   },
 };
 
-// ------------------------------------------- THE RIGHT WALL IS INVERTED ---
-// THIS IS A COMPENSATION, NOT GEOMETRY. The table above is the room's real
-// behaviour and is not to be edited: looking right, "forward" is toward the
-// LEFT of that view, so a forward dolly streams the right wall's content toward
-// frame RIGHT (+0.61), the exact mirror of the left wall. That is correct and
-// stays correct.
+// THE MATRIX, AND WHAT IT IS CHECKED AGAINST. Two independent things could go
+// wrong silently - the room's own geometry, and the compensation laid on top of
+// it - so both are stated as tables and both are asserted at load.
 //
-// What is also true is that the generator does the opposite, every time, in
-// both directions. Measured on the right wall, four clips, two presets:
+//   deliver : what a finished clip on this wall must MEASURE. The room.
+//   ask     : what its contract is written to request.
 //
-//     clip                     preset      asked      delivered
-//     R_bear_Pushin.mp4        C_PushIn    +0.4276     -0.1789
-//     R_Toronto_Pushout.mp4    C_PushOut   -0.4276     +0.0826
-//     19:40 Toronto set        C_PushOut   -0.4276     +0.0826
-//     18:52 Toronto set        C_PushOut   -0.4276     +0.2330
+// They differ on one wall. The model reverses the right wall's travel, five
+// measured clips out of five across both presets and three rewordings, while the
+// left wall has never once gone the wrong way. So the right wall is asked for
+// the reverse and the reversal delivers the room. Nothing in the PROMPT says
+// "reverse", "opposite" or "mirror" - the contract carries signed numbers and a
+// sign convention, and the arithmetic happens here.
 //
-// Four for four, both signs, sign flipped every time. Three rounds of rewording
-// have moved the magnitude and never the sign - the last one took the wrong-way
-// travel from +0.233 to +0.083 and still did not turn it round. At that point
-// the honest thing is to stop arguing with it: ask the right wall for the
-// opposite of what the room wants and let the inversion deliver the right
-// answer. The owner asked for exactly this ("dont change the prompts just
-// launch the parameters inverse").
+// To retire the compensation: set ASK_SIGN.right to +1 and generate one set.
+const ASK_SIGN = { left: +1, center: +1, right: +1 };
+// RETIRED 2026-09-24, and the measurement that retired it: the right wall was
+// asked for -0.424 and delivered -0.138. SAME SIGN. It obeyed.
 //
-// TWO PLACES MUST NOT SEE THE INVERTED NUMBER:
-//   * compare(), which grades a finished clip - the clip should MEASURE the
-//     room's geometry, so it is graded against dxDelivered, not the ask; and
-//   * the motion-lock end frame, which warps the plate itself. A start/end pair
-//     is an interpolation between two real images, so nothing inverts it, and
-//     feeding it the inverted ask would break the one lever that works.
-// Both read the `*Delivered` fields. Everything the PROMPT is built from reads
-// the plain fields, so the contract is inverted whole and stays self-consistent.
+// It had inverted five times out of five before that, so the compensation was
+// fair when it went in - but every one of those five was under a contract that
+// derived the direction from the picture's own depth ("the world recedes toward
+// its LEFT edge...") or from relational wording. Once the direction became a
+// signed number against a stated axis - camera.x_axis, dx_total, a checkpoint
+// table - the wall started following it. The compensation then became the bug:
+// we asked for the reverse of the room and it gave us exactly that.
 //
-// To retire this, set right back to +1 and measure a set. If the generator has
-// changed, the sign will come back on its own.
-const DELIVERY_SIGN = { left: +1, center: +1, right: -1 };
+// So the fix for the inversion was the contract, not a sign. Leaving the table
+// here as the record, and because if a future model starts reversing again this
+// is the one line to change - after measuring, not before.
+// Nothing is flipped on its way to or from Higgsfield. Kept defined because a
+// mirrored-media experiment briefly lived here and anything still importing it
+// should get a falsy answer rather than undefined.
+const MIRROR_WALLS = { left: false, center: false, right: false };
+
+// Fails the process at startup rather than a clip in the theatre.
+(function assertMatrix() {
+  const STITCH = {
+    C_PushIn:  { left: -0.6097, center: 2.0119, right: +0.6439 },
+    C_PushOut: { left: +0.5799, center: 0.5128, right: -0.6067 },
+  };
+  for (const id of Object.keys(STITCH)) {
+    const w = MOVES[id].walls;
+    if (w.right.dx !== -w.left.dx) {
+      throw new Error('rigspec: ' + id + ' side walls are not mirror-opposite');
+    }
+    for (const wall of ['left', 'right']) {
+      if ((w[wall].dx > 0) !== (STITCH[id][wall] > 0)) {
+        throw new Error('rigspec: ' + id + ' ' + wall + ' travels against the stitched reference');
+      }
+    }
+    if ((w.center.scale > 1) !== (STITCH[id].center > 1)) {
+      throw new Error('rigspec: ' + id + ' centre zooms against the stitched reference');
+    }
+  }
+  if (ASK_SIGN.left !== 1 || ASK_SIGN.center !== 1) {
+    throw new Error('rigspec: only the right wall carries a compensation');
+  }
+})();
 
 // The house coherent-lateral-flow ceiling for the side walls, from the wall
 // brief's energy table: 6 px per frame at master resolution. Reported, never
@@ -296,6 +313,31 @@ function gestureFraction(speedPct, T) {
   return pct * BENCHMARK_DX_RATE * T / REF_SIDE_DX_TOTAL;
 }
 
+// ------------------------------------------------------- THE GESTURE CAP ---
+// ONE REFERENCE GESTURE IS THE WHOLE MOVE. Nothing capped this, and on
+// 2026-09-24 the dial at 250% over a 10-second clip asked the side walls for
+//
+//     dx -2.12 frame widths, 24.9 px per frame
+//
+// against a house ceiling of 6 px/frame. The picture would have to leave the
+// screen twice over. That is not a fast version of the move, it is not a shot at
+// all, and the generator did what it does with an instruction it cannot draw: it
+// abandoned it and substituted one it can. The left wall came back dx -0.051
+// with scale 2.55 - a dolly. The owner's report was "the left wall is mimicking
+// the centre wall's motion", and that is what an impossible lateral ask turns
+// into.
+//
+// The ceiling is the reference gesture itself. The owner's stitched goal moves
+// the side walls 0.59-0.61 frame widths, and that IS the move - speed changes
+// how hard it is driven within the gesture, duration changes the clip length,
+// and neither is licence to ask for three of them. g > 1 has never produced a
+// usable side wall and has twice produced a dolly.
+//
+// Capped per wall, on the EFFECTIVE gesture (after the centre trim), so the
+// centre - which the owner rates as the one wall that knows what it is doing -
+// is untouched: at 25% trim it would need the dial past 1000% to reach the cap.
+const GESTURE_CAP = 1.0;
+
 // HOW SMALL A SCALE CHANGE IS WORTH STATING, per wall.
 //
 // One flat 0.15 used to cover both, and trimming the centre exposed why that
@@ -374,7 +416,9 @@ function spec(moveId, wallId, durationSec, speedPct, centrePct) {
   const centreTrim = w === 'center'
     ? ((Number.isFinite(cp) && cp > 0) ? cp : CENTRE_TRIM_DEFAULT) / 100
     : 1;
-  const g = gestureFraction(speedPct, T) * centreTrim;
+  const gAsked = gestureFraction(speedPct, T) * centreTrim;
+  const g = Math.min(gAsked, GESTURE_CAP);
+  const gestureClamped = gAsked > GESTURE_CAP;
 
   // THE ROOM'S OWN FIGURES FIRST - what a correct finished clip must measure.
   const dxDelivered = raw.dx * conv * g;
@@ -384,20 +428,19 @@ function spec(moveId, wallId, durationSec, speedPct, centrePct) {
   // their results at any speed and any duration.
   const scaleDelivered = Math.pow(raw.scale, g);
 
-  // THEN THE ASK, which on the right wall is the opposite of it. See
-  // DELIVERY_SIGN above: four measured clips, two presets, sign flipped every
-  // time, so the ask is flipped to compensate. Applying it as a multiplier on
-  // dx and as a sign on the scale EXPONENT keeps the inverted ask an exact
-  // reciprocal of the delivered figure, the same way the two presets are exact
-  // reciprocals of each other.
-  const sign = DELIVERY_SIGN[w] || 1;
+  // THEN THE ASK, which on the right wall is the reverse of it - see ASK_SIGN
+  // above. x reverses; scale does not.
+  const sign = ASK_SIGN[w] || 1;
+  const inverted = sign !== 1;
   const dxTotal = dxDelivered * sign;
   const dxRate = dxTotal / T;                       // frame-widths per second
-  const dyTotal = dyDelivered * sign;
-  const scaleTotal = Math.pow(raw.scale, g * sign);
+  const dyTotal = dyDelivered;
+  const scaleTotal = scaleDelivered;
   const scaleRate = Math.pow(scaleTotal, 1 / T);
   const pxPerFrame = Math.abs(dxTotal) * WALL_PX[w] / (T * FPS);
 
+  // The real plate is sent, so these describe the real plate. They are no longer
+  // flipped for the right wall: nothing about the picture is altered any more.
   const seamEdge = w === 'left' ? 'RIGHT' : w === 'right' ? 'LEFT' : null;
   const outerEdge = w === 'left' ? 'LEFT' : w === 'right' ? 'RIGHT' : null;
   const towardEdge = dxTotal === 0 ? null : (dxTotal > 0 ? 'RIGHT' : 'LEFT');
@@ -423,7 +466,18 @@ function spec(moveId, wallId, durationSec, speedPct, centrePct) {
     dxDelivered: round(dxDelivered, 4),
     dyDelivered: round(dyDelivered, 4),
     scaleDelivered: round(scaleDelivered, 4),
-    deliveryInverted: sign !== 1,
+    // True when this wall is ASKED for the reverse of what the room wants. The
+    // prompt is built from the plain fields; compare() and the motion-lock end
+    // frame read the *Delivered ones, which are always the real room.
+    askInverted: inverted,
+    deliveryInverted: inverted,
+    // The dial asked for more than one reference gesture and was held to one.
+    // Surfaced rather than applied quietly: the operator turned the dial up for
+    // a reason, and needs to know it stopped doing anything.
+    gestureClamped: gestureClamped,
+    gestureAsked: round(gAsked, 3), gestureUsed: round(g, 3),
+    speedPctUsable: gestureClamped
+      ? Math.floor(Number(speedPct || 100) * GESTURE_CAP / gAsked) : null,
     towardEdgeDelivered: dxDelivered === 0 ? null : (dxDelivered > 0 ? 'RIGHT' : 'LEFT'),
     rollTotal: raw.roll,
     pxPerFrame: round(pxPerFrame, 2),
@@ -684,7 +738,7 @@ function compare(moveId, wallId, measured, speedPct, centrePct) {
   const row = { wall: wallId, problems: [], want: want };
 
   // GRADED AGAINST THE ROOM, NOT AGAINST THE ASK. On the right wall the two are
-  // opposites on purpose (see DELIVERY_SIGN): the contract asks for the reverse
+  // opposites on purpose (see ASK_SIGN): the contract asks for the reverse
   // because the generator reverses it. A finished clip still has to MEASURE the
   // room's own geometry, so that is what it is held to - otherwise inverting the
   // ask would have inverted the verdict along with it and every correct right
@@ -749,6 +803,57 @@ function compare(moveId, wallId, measured, speedPct, centrePct) {
   if (!scaleWanted && Math.abs(Math.log(Math.max(0.05, measured.scaleTotal))) > Math.log(1.2)) {
     row.problems.push('zooming ' + (measured.scaleTotal > 1 ? 'in' : 'out') + ' to x'
       + Number(measured.scaleTotal).toFixed(2) + ' when the preset asks for no size change at all');
+  }
+  // A SIDE WALL THAT HAS TURNED INTO A DOLLY. The owner's words for it were
+  // "the left wall is mimicking the centre wall's motion", and nothing named it:
+  // the wall came back dx -0.051 with scale 2.55 against an ask of -2.12, and
+  // the report was two separate complaints ("travelling only 2%" and "far more
+  // scale change") that between them never said what had actually happened. On a
+  // side wall those two together mean one thing, and it has a cause worth
+  // printing: the lateral ask was bigger than the frame, so it was abandoned.
+  if (want.wall !== 'center' && dxWanted && row.dx.ratio < 0.25
+      && Math.abs(Math.log(Math.max(0.05, measured.scaleTotal))) > Math.log(1.25)) {
+    row.problems.unshift('this side wall has performed a DOLLY, not a sideways travel - it has done '
+      + 'the job of the centre wall (scale x' + Number(measured.scaleTotal).toFixed(2) + ', travel '
+      + Math.round(row.dx.ratio * 100) + '% of the ask). Check the speed dial first: an ask bigger '
+      + 'than about one frame width gets abandoned and substituted');
+  }
+  // IS THE PICTURE MOVING AS ONE SHEET? bgRatio cannot answer this: a delivered
+  // left wall scored 0.909 on it - comfortably "the background is moving" - while
+  // its ground plane travelled -0.508 against a sky of -0.090. The owner saw it
+  // straight away ("why is the floor sliding") and the verifier said nothing.
+  //
+  // bandSpread is dx measured in four horizontal strips and compared. On a side
+  // wall the answer must be zero: there is no depth separation in an orthographic
+  // side view, and the owner's own correct clip (L_bear) reads 0.028. Delivered
+  // walls that slide read 0.589, 0.769, 0.822.
+  if (want.wall !== 'center' && dxWanted
+      && typeof measured.bandSpread === 'number' && measured.bandSpread > 0.25) {
+    const b = Array.isArray(measured.bandDx) ? measured.bandDx : null;
+    row.bandSpread = measured.bandSpread;
+    row.problems.unshift('LAYERS ARE SLIDING, not the camera - the picture is not moving as one '
+      + 'sheet. Measured across four horizontal strips: '
+      + (b ? b.join(', ') : '') + ' (spread ' + Math.round(measured.bandSpread * 100)
+      + '%, a rigid move is under 10%). One strip of the picture is travelling at a different '
+      + 'rate from the others');
+  }
+  // IS IT A TRAVEL OR A SWING? The owner's report on the delivered right wall was
+  // "the generations are panning the camera", and nothing here could see it: a
+  // pan and a travel give the same whole-frame dx. They differ ACROSS the frame.
+  // A viewpoint that turns compresses one side and fans the other; one that
+  // slides gives every column nearly the same shift, with only the mild extra
+  // that near things genuinely have.
+  //
+  // Reference (ClaudeLearning_RightWall.mp4): column spread 16.3%.
+  // Delivered right wall: 71.6%. Delivered left wall: 89.9%.
+  if (want.wall !== 'center' && dxWanted
+      && typeof measured.colSpread === 'number' && measured.colSpread > 0.45) {
+    const c = Array.isArray(measured.colDx) ? measured.colDx : null;
+    row.colSpread = measured.colSpread;
+    row.problems.unshift('THE VIEW IS SWINGING, not travelling - one side of the frame is moving far '
+      + 'more than the other (' + (c ? c.join(', ') : '') + ', spread '
+      + Math.round(measured.colSpread * 100) + '%). A viewpoint sliding along gives about 16%, which '
+      + 'is the reference; this is a pan');
   }
   if (Math.abs(measured.rollTotal || 0) > 4) {
     row.problems.push('the horizon rolls ' + Number(measured.rollTotal).toFixed(1) + ' deg');
@@ -1011,6 +1116,9 @@ function elementSchedule(rig, wallId) {
              + 'for, so a window this short is the one most likely to be overrun.');
   }
 
+  // The element crosses the real plate, and the plate is no longer altered, so
+  // its edges are the room's own. (When the right wall was briefly generated on
+  // a flipped plate these had to swap with it; they do not any more.)
   const enterEdge = dir === 'right_to_left' ? 'RIGHT' : 'LEFT';
   const exitEdge = dir === 'right_to_left' ? 'LEFT' : 'RIGHT';
   const inAt = mine.enter, outAt = mine.exit;
@@ -1102,17 +1210,30 @@ function negativePrompt(sp, el) {
   // element moving on its own at all.
   if (sp.kind !== 'static') {
     n.push('the background is never still while the foreground moves');
-    n.push('no object travels across the picture on its own - the picture is what moves, and '
-         + 'nothing changes its position within the scene' + ex);
+    if (sp.wall !== 'center') {
+      n.push('no still photograph with objects animated over it - walls, floor, fittings and '
+           + 'furniture all travel together, nothing slides across anything else');
+      n.push('no stretching, squashing, smearing or warping - straight lines stay straight and a '
+           + 'rectangle stays the same rectangle');
+      n.push('the band entering frame is newly drawn room, never dragged or duplicated edge pixels');
+    }
+    n.push('nothing moves within the picture - the picture itself is what moves' + ex);
   }
   if (Math.abs(sp.scaleTotal - 1) < zoomDeadzone(sp.wall)) {
     n.push('no zoom, no dolly, nothing gets bigger or smaller');
   }
   if (Math.abs(sp.dxTotal) < 0.02) n.push('no sideways drift, no pan');
-  n.push('no held frame and no jump - the motion is continuous from frame 1 to the last frame');
-  n.push('no roll, no tilt, no yaw, no camera shake');
-  n.push('nothing added: no new object, character, crowd, sign, text, confetti, sparkle, particle, '
-       + 'weather or light' + ex);
+  n.push('no held frame and no jump - continuous from frame 1 to the last');
+  n.push('no roll, no tilt, no shake, and no pan or swing - the view slides along, it never turns'
+       + (sp.wall !== 'center' ? '; verticals stay vertical and nothing keystones' : ''));
+  // "nothing added" and "draw the incoming band as real room" were fighting each
+  // other on the side walls: the band IS new content, and forbidding it outright
+  // is one way a model decides to stretch the edge instead of drawing it. So the
+  // rule is scoped to the scene rather than the band.
+  n.push('nothing added to the scene itself: no new object, character, text, particle, weather or '
+       + 'light' + (sp.wall !== 'center'
+           ? ' - the band coming into frame is the ONE place new scene appears, and it is more of '
+             + 'the same room, not a new feature' : '') + ex);
   n.push('nothing removed, redrawn, restyled or recoloured');
   n.push('characters keep their exact design, count and facing'
        + (el ? ' - the travelling element is not one of them and is not in the scene already' : ''));
@@ -1179,11 +1300,10 @@ function cameraJson(moveId, wallId, durationSec, opts) {
     ? 'THE ONE THING THAT MUST BE RIGHT: the camera does not move at all.'
     : (sp.towardEdge
         ? 'THE ONE THING THAT MUST BE RIGHT: the WHOLE PICTURE is carried toward the '
-          + sp.towardEdge + ' edge of frame as one locked piece - background, sky, floor, far crowd, '
-          + 'every pixel together, keeping their exact positions relative to each other - travelling '
+          + sp.towardEdge + ' edge as one locked piece, every pixel together, travelling '
           + Math.abs(sp.dxTotal * 100).toFixed(1) + '% of the frame width over '
-          + sp.durationSec.toFixed(1) + ' seconds at a constant speed. Nothing inside the picture '
-          + 'travels on its own or changes place within the scene.'
+          + sp.durationSec.toFixed(1) + 's at constant speed. SIDEWAYS TRAVEL, not a zoom and not '
+          + 'a dolly: nothing grows and nothing approaches.'
         : 'THE ONE THING THAT MUST BE RIGHT: ' + sz.change + ' There is no sideways drift at all.');
 
   const checkpoints = [];
@@ -1218,177 +1338,235 @@ function cameraJson(moveId, wallId, durationSec, opts) {
       speed: 'constant from the first frame to the last - no ease, no hold, no acceleration',
     },
     checkpoints: checkpoints,
-    checkpoints_key: '[seconds, dx_so_far_in_frame_widths, size_so_far] - the picture must be at '
-                   + 'these values at these times. Equal movement in every equal slice of time.',
+    checkpoints_key: '[seconds, dx_so_far, size_so_far] - hit these exactly. Equal movement in '
+                   + 'every equal slice of time.',
   };
 
   // No km/h. It was never measurable here - pixels carry no depth - so it rode
   // in the contract as an advisory string that governed nothing while looking
   // authoritative. What the dial sets is a real, checkable rate, and it is
   // already stated above as dx_per_second; this only records where it came from.
+  // speed_note used to sit here: 248 characters explaining how OUR speed dial
+  // works, to a model that does not have one and cannot act on it. The figures
+  // it described are already stated as dx_total and dx_per_second. Cut with the
+  // rest of the compression pass - a contract this size gets its middle read
+  // least, so anything the generator cannot act on is taking a seat from
+  // something it can.
+  if (sp.kind !== 'static') out.camera.speed_percent = sp.speedPct;
+
+  // THE SIGN CONVENTION, ONCE. Every x figure in this contract - dx_total,
+  // dx_per_second, the checkpoint table, the landmark table - is signed against
+  // this one sentence, so the direction is carried by arithmetic rather than by
+  // an adjective. Words like "reverse", "opposite" and "mirror" are deliberately
+  // absent from the whole contract: they are relational, and a wall that cannot
+  // see the other two has nothing to be relative to.
   if (sp.kind !== 'static') {
-    out.camera.speed_percent = sp.speedPct;
-    out.camera.speed_note =
-      'Speed is a RATE, so the travel above is dx_per_second x duration: the same speed over a '
-      + 'longer clip covers proportionally more ground. 100% is the measured average of the '
-      + 'operator reference clips (' + BENCHMARK_DX_RATE + ' of frame width per second on a side wall).';
+    out.camera.x_axis = 'x is measured across this frame: x = 0.000 at the LEFT edge, x = 1.000 at '
+      + 'the RIGHT edge. A NEGATIVE x figure carries the picture toward the LEFT edge; a POSITIVE '
+      + 'one carries it toward the RIGHT edge. Every x number below is signed this way.';
   }
 
-  if (sp.wall !== 'center' && sp.towardEdge) {
+  // PARALLAX BELONGS TO THE CENTRE, AND THE SIDES MUST BE RIGID.
+  //
+  // This block used to go to all three walls, asking near things to travel
+  // 1.9x further than far ones - a 48% spread across depth. On a dolly that is
+  // correct and physical: move forward and the near world really does sweep past
+  // faster. On a SIDE wall it is neither, and it was fighting the headline in the
+  // same contract, which asks for "every pixel together, keeping their positions
+  // relative to each other". A contradiction the model settles by separating the
+  // plate into layers - and a layered flat photo slides its ground plane over its
+  // sky. That is the floor sliding.
+  //
+  // Measured, dx per horizontal band (sky / upper / lower / ground):
+  //
+  //     L_bear.mp4 - the owner's own correct clip
+  //         -0.133  -0.135  -0.136  -0.136     spread 3%     RIGID
+  //     tool output, left wall
+  //         -0.090  -0.094  -0.210  -0.508     spread 82%    ground 5.6x the sky
+  //     tool output, right wall
+  //         -0.061  -0.090  -0.123  -0.266     spread 77%
+  //
+  // The generator was doing what it was told. So a side wall is now told the
+  // opposite, in figures: every band the same number, with a stated tolerance.
+  // The centre keeps its parallax, because a push in genuinely has it and the
+  // owner rates the centre as the one wall that knows what it is doing.
+  if (sp.wall === 'center' && sp.kind !== 'static') {
+    // IN SCALE, NOT IN dx. The centre of a dolly has no lateral travel at all -
+    // dxTotal is 0 - so the old block stated a parallax of 0, 0, 0 and said
+    // nothing. On this wall depth shows as things growing at different rates:
+    // the near world swells past you while the far end barely changes.
     out.parallax = {
-      foreground_dx_total: round(sp.dxTotal * 1.45, 3),
-      midground_dx_total: sp.dxTotal,
-      far_background_dx_total: round(sp.dxTotal * 0.75, 3),
-      rule: 'measured from the reference render. All three travel the SAME way. Depth changes HOW '
-          + 'FAR something travels, never WHICH WAY. The furthest thing in frame still moves '
-          + Math.abs(sp.dxTotal * 0.75 * 100).toFixed(0) + '% of the frame width. If a character is '
-          + 'also animating on its own, that is ON TOP of this, not instead of it.',
+      foreground_scale_end: round(Math.pow(scaleEnd, 1.6), 3),
+      midground_scale_end: round(scaleEnd, 3),
+      far_background_scale_end: round(Math.pow(scaleEnd, 0.45), 3),
+      rule: 'this wall is a dolly, so depth separates: the nearest things grow fastest and reach '
+          + 'the edges first, the far end barely changes size. Everything opens outward from frame '
+          + 'centre; nothing slides left or right.',
+    };
+  } else if (sp.wall !== 'center' && sp.towardEdge) {
+    // ======================= THE SIDE-WALL STANDARD ========================
+    // Measured from ClaudeLearning_RightWall.mp4, the owner's reference for what
+    // a side wall must do. 1.9s, 30fps, a flat cabin wall shot square-on:
+    //
+    //     dx            +0.8022   the picture travels toward frame RIGHT
+    //     band spread     3.9%    0.778 0.797 0.766 0.798  (top->bottom)
+    //     column spread  16.3%    0.719 0.753 0.787 0.820 0.860  (left->right)
+    //     bgRatio         0.90    the whole frame travels with the camera
+    //     roll           -0.22    no rotation at all
+    //
+    // Three things that reference settles, each of which this contract had wrong
+    // at some point:
+    //
+    //  1. IT IS A TRAVEL, NOT A PAN. The owner's report on the delivered right
+    //     wall was "the generations are panning the camera". A pan swings the
+    //     frame: verticals lean, rectangles keystone, one side of the picture
+    //     compresses. Nothing in the reference does that - a window crosses the
+    //     whole frame and stays the same rectangle.
+    //
+    //  2. RIGID TOP TO BOTTOM, 3.9%. This is the sliding-floor test. Every
+    //     horizontal strip travels the same distance. Delivered walls that slid
+    //     read 59%, 77%, 82%.
+    //
+    //  3. BUT NOT FLAT: 16.3% ACROSS. A previous version of this block demanded
+    //     zero depth separation, which was an over-correction. A camera really
+    //     moving along a wall gives nearer things slightly more travel - here the
+    //     near end runs 1.20x the far end. That is a fifth more, not the 1.9x the
+    //     old parallax block asked for, and it is measured ACROSS the frame while
+    //     the sliding failure shows up DOWN it. Different axis, different fault.
+    //
+    // And the incoming edge is the other half of the reference: a mounted trophy,
+    // a table lamp and a barrel enter at the trailing edge over those 1.9 seconds,
+    // each fully drawn, correctly lit, growing as it approaches. 80% of the frame
+    // is room that was not visible at the start. So the size of the ask is not the
+    // problem it looked like - this reference invents more new scene than any
+    // contract here asks for, and looks right doing it.
+    const mag = Math.abs(sp.dxTotal);
+    const leaves = sp.towardEdge;
+    const enters = sp.towardEdge === 'LEFT' ? 'RIGHT' : 'LEFT';
+    out.rigid = {
+      dx_of_the_whole_picture: sp.dxTotal,
+
+      travel_not_a_turn: 'The viewpoint slides along parallel to this wall. The wall stays square-on '
+          + 'the entire time: verticals stay vertical, a window or a door frame keeps its exact '
+          + 'rectangular shape all the way across, and neither side of the picture compresses or '
+          + 'fans out. The frame never swings, tilts or rotates.',
+
+      same_top_to_bottom: 'Every horizontal strip of the picture travels the same distance - the '
+          + 'ceiling, the wall, the furniture line and the floor all shift by ' + sp.dxTotal + '. '
+          + 'Nothing slides across anything else, and no layer moves on its own.',
+
+      depth_across: 'Things closest to the viewpoint may travel slightly FURTHER than things at the '
+          + 'back - up to about 1.2x, no more - and may grow a little as they pass. That is the only '
+          + 'depth in this shot. It is never 2x, and it never becomes one layer sliding over another.',
+
+      incoming_edge: 'A band ' + Math.round(mag * 100) + '% of the frame wide comes into view at the '
+          + enters + ' edge: more of this same room, DRAWN - the furniture, fittings and structure '
+          + 'that belong there, correctly lit, in the same perspective, at the right size, growing '
+          + 'naturally as they come nearer. Never stretched, smeared or copied from the edge pixels.',
+
+      leaving_edge: 'Everything at the ' + leaves + ' edge travels off and is gone by the end.',
+
+      not_this: 'Not a still photograph with objects animated over it. Not a pan. Not the frame '
+          + 'stretched sideways.',
     };
   }
 
-  out.landmarks = lm.rows.map((r, i) => ({
-    x_start: r.x0,
-    x_at: lm.times.map((t, k) => [t, r.xs[k]]),
-    name: '<name the real thing at this position in the reference image>',
-  }));
-  out.landmarks_key = '[seconds, x] - pick a real, nameable thing at each x_start and hold it to '
-                    + 'these positions. Outside 0..1 means it has left frame by then.';
+  if (sp.wall === 'center') {
+    out.landmarks = lm.rows.map(r => ({
+      x_start: r.x0,
+      x_at: lm.times.map((t, k) => [t, r.xs[k]]),
+      name: '<name what is at this x in the image>',
+    }));
+    out.landmarks_key = '[seconds, x] - pick a real thing at each x_start and hold it to these '
+                      + 'positions. Outside 0..1 means it has left frame.';
+  }
 
-  if (sp.towardEdge) {
+  // On a side wall rigid.edge_exchange already states which strip leaves and how
+  // wide the incoming band is, so this would be the same requirement twice in one
+  // contract that is over its size budget. The centre still needs it.
+  if (sp.towardEdge && sp.wall === 'center') {
     const revealed = sp.towardEdge === 'RIGHT' ? 'LEFT' : 'RIGHT';
     out.revealed_edge = {
       edge: revealed,
       width_by_end: round(Math.abs(sp.dxTotal), 3),
-      // The element enters through one of the frame edges, and on some walls
-      // that is this band. "Put no new object in this band" and "the element
-      // enters at the RIGHT edge at 2.0s" were flatly contradicting each other
-      // on exactly the walls where the two edges coincide.
-      fill: 'continue the material right next to it - the same floor, wall, sky or crowd. Put no '
-          + 'new object, character or feature in this band.'
+      // The element enters through one of the frame edges, and on some walls that
+      // is this band. "Put no new object in this band" and "the element enters at
+      // the RIGHT edge at 2.0s" were flatly contradicting each other on exactly
+      // the walls where the two edges coincide.
+      fill: 'continue the material next to it. No new object, character or feature in this band.'
           + (el && el.enterEdge === revealed
               ? ' The travelling element crosses this edge at ' + el.inAt + 's and is not band fill.'
               : ''),
     };
   }
 
-  // CONFIRMED WORKING ON C_PushIn - DO NOT REWORD WITHOUT A MEASURED SET.
-  // The owner checked delivered output after this went in: "right motion is
-  // fixed, it's looking nice for push in." Three sets before it were wrong-way
-  // three times out of three. The wording below and the rig_context block are
-  // the only things that changed, so they are load-bearing until something
-  // measured says otherwise.
-  //
-  // THE RIGHT WALL USED TO TRAVEL THE SAME WAY AS THE LEFT ONE.
-  //
-  // Measured across three delivered sets (Snow, Toronto, Bear): the LEFT wall
-  // obeyed its direction every time, and the RIGHT wall travelled the SAME way
-  // as the left every time - asked +0.130 got -0.018, asked +0.162 got -0.364,
-  // asked +0.081 got -0.179. Three for three, wrong way. Reversing it in the
-  // edit is not a fix: it runs the scene's own animation backwards too, so a
-  // walking animal walks backwards.
-  //
-  // EACH JOB SEES ONE IMAGE AND ONE PROMPT. Nothing else is uploaded - not the
-  // other walls' plates, not their prompts, not their clips. So a rule phrased
-  // as "the other side wall goes the opposite way" is unusable: there is no
-  // other wall in front of the model to be opposite TO. A first version of this
-  // field said exactly that and would have been dead text.
-  //
-  // What IS in front of it is the reference image, and that image already
-  // carries the answer, because the two side walls are mirrored in PERSPECTIVE:
-  // the left wall recedes toward its RIGHT edge, the right wall toward its
-  // LEFT. Anchoring travel to the visible vanishing direction therefore comes
-  // out mirrored on its own, from a rule that only ever talks about this one
-  // frame. Same reason `perspective` works and never needed a sibling either.
-  // ...AND THEN IT SENT THE PUSH-OUT SET THE WRONG WAY. Measured 2026-09-23,
-  // C_PushOut at 100% / centre 25%, one set of three:
-  //
-  //     wall     asked dx     measured dx
-  //     LEFT       +0.424        +0.064     right way, 15% of the distance
-  //     CENTER      scale 0.896   scale 0.790  right way, 2.15x too much
-  //     RIGHT      -0.424        +0.233     WRONG WAY - it performed a push in
-  //
-  // The mechanism is the premise, not the conclusion. This field asserts where
-  // depth lies in the supplied picture, and on both side plates it asserted the
-  // opposite of what the plate shows: the right wall's image has its nearest,
-  // largest mass (the towers) at its LEFT edge, and the left wall's at its
-  // RIGHT - in both, the near end is the SEAM, not the outer end. Told "the
-  // nearest things sit at your RIGHT edge" by text and the reverse by the
-  // picture, the right wall believed the picture, followed "travel into the
-  // depth" toward what IT could see was far, and came out backwards.
-  //
-  // So the direction is no longer DERIVED from a depth reading the tool has not
-  // verified. It is stated in frame terms, which need no premise and can be
-  // checked against the result: which edge everything leaves by, and which edge
-  // uncovers new material. `perspective` below still describes the intended
-  // geometry of the set - the owner approved that and it is untouched - it just
-  // no longer decides which way the camera goes.
-  //
-  // C_PushIn IS DELIBERATELY LEFT EXACTLY AS IT WAS. The owner confirmed it
-  // from delivered output ("right motion is fixed, it's looking nice for push
-  // in") after three wrong-way sets, and asked for it not to be touched. Its
-  // contract is byte-identical to before this change; only the side walls on a
-  // move that travels toward the SEAM - which is push-out - get the new field.
-  if (sp.wall !== 'center' && sp.towardEdge && !sp.towardSeam) {
-    out.direction_from_perspective =
-      'Read the direction off this image: the world recedes toward its ' + sp.seamEdge
-      + ' edge and the nearest, largest things sit at its ' + sp.outerEdge + ' edge. '
-      + 'The picture travels OUT of that depth, off the near ' + sp.outerEdge + ' end - the closest '
-      + 'things leave frame first.';
-  } else if (sp.wall !== 'center' && sp.towardEdge) {
-    const away = sp.towardEdge;
-    const into = away === 'LEFT' ? 'RIGHT' : 'LEFT';
-    out.direction_check =
-      'DIRECTION - in frame terms only. Do not work it out from the perspective of the picture. '
-      + 'Everything visible at 0s moves toward the ' + away + ' edge and whatever is against that '
-      + 'edge at 0s is out of frame by the end. The band along the ' + into + ' edge, '
-      + Math.round(Math.abs(sp.dxTotal) * 100) + '% of the frame wide, is material from outside the '
-      + 'frame. If anything finishes nearer the ' + into + ' edge than it started, it is backwards.';
+  // `perspective` used to be stated here for the side walls. It asserted where
+  // the depth lies in the plate, and it was measured FALSE against both of the
+  // owner's side images (nearest, largest mass at the seam in each, the opposite
+  // of what it claimed). rigid.not_this now says the truer thing - there is no
+  // depth separation on this wall - so the claim is gone rather than corrected.
+
+  // THE OTHER TWO WALLS, AS NUMBERS. Each wall is a separate job: one image and
+  // one prompt go up and nothing else - not the other walls' plates, not their
+  // prompts, not their finished clips. So the only way this job can know what it
+  // has to cut together with is to be TOLD, in figures. Deliberately numbers and
+  // nothing else: describing another wall's CONTENT is how a wall ends up drawing
+  // its neighbour's subject.
+  // Side walls no longer carry it: a wall that cannot see its neighbours has no
+  // use for their figures, and it never changed a measured outcome. The centre
+  // keeps it - it is the wall that works.
+  const others = sp.wall === 'center'
+    ? ['left', 'right']
+    : [];
+  if (others.length) {
+    out.rig_context = {
+      note: 'The other two walls are separate jobs, figures only, so your clip cuts with theirs. '
+          + 'Draw your own frame, never their content.',
+    };
   }
 
-  if (sp.wall !== 'center') {
-    out.perspective = 'a flat side plane at 90 degrees to the centre wall, seen from one seat in the '
-      + 'middle of the room. The world recedes toward the '
-      + (sp.wall === 'left' ? 'RIGHT' : 'LEFT') + ' edge and is nearest and largest at the '
-      + (sp.wall === 'left' ? 'LEFT' : 'RIGHT') + ' edge. This never changes during the shot.';
-  }
-
-  // THE OTHER TWO WALLS, AS NUMBERS.
-  //
-  // Each wall is a separate job: one image and one prompt go up, and nothing
-  // else - not the other walls' plates, not their prompts, not their finished
-  // clips. So the only way this job can know what it has to cut together with
-  // is to be TOLD, in figures. The prose block has carried an all-walls table
-  // for a long time, but prose is not what gets sent; this is the same table in
-  // the contract that is.
-  //
-  // Deliberately numbers and nothing else: no scene description, no subject, no
-  // style. Describing another wall's CONTENT is how a wall ends up drawing its
-  // neighbour's subject, which is the failure IMAGE_MODE 'extension' exists to
-  // stop. Direction and magnitude are safe to share; content is not.
-  const others = ['left', 'center', 'right'].filter(w => w !== sp.wall);
-  out.rig_context = {
-    note: 'The other two walls are separate jobs you are not shown. Figures only, so your clip cuts '
-        + 'together with theirs as one move. Draw your own frame only, never their content.',
-  };
   for (const w of others) {
     const o = spec(sp.move, w, sp.durationSec, opts && opts.speedPct, opts && opts.centrePct);
     // The DELIVERED figures, not the ask. This block exists so three separate
     // jobs cut together as one move, and what cuts together is what the finished
     // clips actually do - the right wall's ask is deliberately the reverse of
-    // that (see DELIVERY_SIGN), and passing the reverse on here would tell the
+    // that (see ASK_SIGN), and passing the reverse on here would tell the
     // other two walls the rig splits in half.
+    // ONE FRAME OF REFERENCE PER CONTRACT. These are the other walls as they will
+    // be DELIVERED - except on a wall whose own ask is reversed, where they are
+    // reversed with it. Without that, the right wall's contract said "I travel
+    // LEFT" and "the left wall travels LEFT" in the same breath: a rig that
+    // splits in half, and the exact picture of the failure this file exists to
+    // stop. The block is there so three jobs cut together, which only works if
+    // all three figures in it are in the same handedness as the ask beside them.
     const oz = Math.abs(o.scaleDelivered - 1) >= zoomDeadzone(o.wall);
+    const odx = sp.askInverted ? -o.dxDelivered : o.dxDelivered;
+    const oEdge = odx === 0 ? null : (odx > 0 ? 'RIGHT' : 'LEFT');
     out.rig_context[w] = {
-      dx_total: o.dxDelivered,
-      travel: o.towardEdgeDelivered ? 'toward its ' + o.towardEdgeDelivered + ' edge'
-                                    : 'no sideways travel',
+      dx_total: round(odx, 4),
+      travel: oEdge ? 'toward its ' + oEdge + ' edge' : 'no sideways travel',
       scale_end: oz ? round(o.scaleDelivered, 3) : 1.0,
     };
   }
-  out.rig_context.your_wall = sp.wall;
+  if (out.rig_context) out.rig_context.your_wall = sp.wall;
 
   out.never = negativePrompt(sp, el);
-  return out;
+
+  // ORDER MATTERS, AND IT IS SET HERE RATHER THAN BY WHERE THE CODE HAPPENS TO
+  // ASSIGN. The requirement that keeps failing - the picture must actually move,
+  // as one piece - was landing seventh of nine, which README section 5 is blunt
+  // about: a long input gets its middle read least, and that is exactly where
+  // the terms that decide whether a clip is usable kept ending up. So the one
+  // thing leads, the numbers that define it come next, and the housekeeping goes
+  // last. Any key not listed keeps its position at the end.
+  const ORDER = ['headline', 'rigid', 'camera', 'checkpoints', 'checkpoints_key',
+                 'parallax', 'never', 'frame', 'landmarks', 'landmarks_key',
+                 'revealed_edge', 'travelling_element', 'perspective', 'rig_context',
+                 'room', 'id'];
+  const ordered = {};
+  for (const k of ORDER) if (k in out) ordered[k] = out[k];
+  for (const k of Object.keys(out)) if (!(k in ordered)) ordered[k] = out[k];
+  return ordered;
 }
 
 
@@ -1398,5 +1576,5 @@ module.exports = {
   cameraGloss,
   MOVES, REF_VIEW_PX, WALL_PX, WALL_H, FPS, SAFE_PX_PER_FRAME, BENCHMARK_DX_RATE,
   normalise, spec, posAt, posAtY, landmarkRows, numericBlock, inspector, presetIds, compare, paceMatch,
-  cameraJson, travelWord, anchorsFor, elementSchedule, elementCount, DELIVERY_SIGN,
+  cameraJson, travelWord, anchorsFor, elementSchedule, elementCount, MIRROR_WALLS, ASK_SIGN,
 };
