@@ -172,9 +172,27 @@ const MOVES = {
 // sign convention, and the arithmetic happens here.
 //
 // To retire the compensation: set ASK_SIGN.right to +1 and generate one set.
-const ASK_SIGN = { left: +1, center: +1, right: +1 };
-// RETIRED 2026-09-24, and the measurement that retired it: the right wall was
-// asked for -0.424 and delivered -0.138. SAME SIGN. It obeyed.
+const ASK_SIGN = { left: +1, center: +1, right: -1 };
+// BACK ON 2026-09-24 20:35, set from the owner's own reference for this wall.
+//
+// ClaudeLearning_RightWall.mp4 is the standard: the picture travels toward frame
+// RIGHT, dx +0.8022, new room entering at the LEFT edge. The delivered right wall
+// under the same contract went the other way - dx -0.1218, the street lamp
+// tracking 0.28 -> 0.20 -> 0.13 across the frame and the KELLER'S billboard
+// entering from the RIGHT edge. Asked +0.424, delivered -0.1218: inverted.
+//
+// BE HONEST ABOUT WHAT THIS IS. The right wall has not been consistent. It
+// inverted five times, then obeyed twice (+0.2583, and -0.138 against a -0.424
+// ask), and has now inverted again. A sign flip is a bet on which way it will go,
+// not a cure, and the quality of the hold - which the owner has signed off - is
+// unaffected either way. What it buys is that the CURRENT behaviour produces the
+// CURRENT reference, and it is one line to change when that stops being true.
+//
+// TO RETIRE IT: set right to +1, generate one right wall, measure. If dx comes
+// back positive on a C_PushIn, the model is obeying again and this should go.
+//
+// The previous retirement note, kept because the reasoning still holds and this
+// is the second time round:
 //
 // It had inverted five times out of five before that, so the compensation was
 // fair when it went in - but every one of those five was under a contract that
@@ -215,6 +233,7 @@ const MIRROR_WALLS = { left: false, center: false, right: false };
   if (ASK_SIGN.left !== 1 || ASK_SIGN.center !== 1) {
     throw new Error('rigspec: only the right wall carries a compensation');
   }
+
 })();
 
 // The house coherent-lateral-flow ceiling for the side walls, from the wall
@@ -1571,6 +1590,36 @@ function cameraJson(moveId, wallId, durationSec, opts) {
 
 
 function presetIds() { return Object.keys(MOVES); }
+
+
+// ===================== THE CAMERA HOLD IS LOCKED ===========================
+// Runs at the BOTTOM of the file: it builds a real contract, so every constant
+// and function it touches has to exist first. The matrix assertions above run
+// early because they only read tables.
+(function assertHold() {
+  const probe = cameraJson('C_PushIn', 'right', 5, { speedPct: 100, centrePct: 25 });
+  const r = probe.rigid || {};
+  const need = [
+    ['travel_not_a_turn', /never swings, tilts or rotates/],
+    ['same_top_to_bottom', /Every horizontal strip/],
+    ['depth_across', /1\.2x, no more/],
+    ['incoming_edge', /DRAWN/],
+  ];
+  for (const [field, re] of need) {
+    if (!r[field] || !re.test(r[field])) {
+      throw new Error('rigspec: the side-wall camera hold has regressed - rigid.' + field
+                    + ' is missing or reworded. It is locked; see THE SIDE-WALL STANDARD.');
+    }
+  }
+  if (probe.camera.scale_end !== 1) {
+    throw new Error('rigspec: a side wall is being asked to dolly (scale_end '
+                  + probe.camera.scale_end + '). The no-dolly hold is locked.');
+  }
+  const neg = (probe.never || []).join(' | ');
+  if (!/no pan or swing/.test(neg) || !/keystones/.test(neg)) {
+    throw new Error('rigspec: the no-pan negative has gone from the side walls. It is locked.');
+  }
+})();
 
 module.exports = {
   cameraGloss,
