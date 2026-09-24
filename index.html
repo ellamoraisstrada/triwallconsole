@@ -509,22 +509,7 @@ td.winspan.bad { color:var(--danger); }
     </p>
   </div>
 
-  <div class="setup" id="sceneRow">
-    <div class="card" id="sceneCard">
-      <h2>Scene <span class="sub">describe the centre wall — option B only</span></h2>
-      <textarea id="sceneInput" placeholder="Describe the whole shot: what's in it, lighting, action, camera movement and timing. Click Save scene, then use each wall's own Draft button below to fill in its prompt."></textarea>
-      <div class="actions">
-        <button class="btn small" id="saveSceneBtn" title="Saves this text as the scene, and clears every wall's own prompt field back to just its locked rules — draft each wall fresh from there">Save scene</button>
-        <button class="btn ghost small" id="syncBtn" title="Pull the scene and prompts Claude already wrote in the /tri-wall chat, instead of typing them here">Sync from chat</button>
-      </div>
-      <div class="statusline" id="syncStatus"></div>
-      <div class="prompt-tag">Reference image <span style="text-transform:none;letter-spacing:0;">— center wall; left &amp; right pivot off this</span></div>
-      <label class="dropzone" id="refdz-center" style="aspect-ratio:auto;height:100px;">
-        <div class="dz-content" id="refdzcontent-center"><span>Drop the center reference image here</span></div>
-        <input type="file" id="reffile-center" accept="image/*">
-        <button type="button" class="dz-remove" id="refdzremove-center" style="display:none;" title="Remove image">✕</button>
-      </label>
-    </div>
+  <div class="setup" id="imageModelRow">
     <div class="card">
       <h2>Image model <span class="sub">reference frames</span></h2>
       <select id="imageModelSelect"></select>
@@ -571,6 +556,32 @@ td.winspan.bad { color:var(--danger); }
 
   </div>
   <div class="modehint" id="imageModeHint"></div>
+  <!-- The Scene card opens HERE, directly under the A/B buttons, because it is
+       what option B reveals. It used to live in the setup row above the section
+       head, so clicking "B - Text prompt" made a panel appear further up the
+       page than the button that had just been pressed. -->
+  <div class="setup" id="sceneRow">
+    <div class="card" id="sceneCard">
+      <h2>Scene <span class="sub">describe the centre wall — option B only</span></h2>
+      <textarea id="sceneInput" placeholder="Describe the whole shot: what's in it, lighting, action, camera movement and timing. Click Save scene, then use each wall's own Draft button below to fill in its prompt."></textarea>
+      <div class="actions">
+        <button class="btn small" id="saveSceneBtn" title="Saves this text as the scene, and clears every wall's own prompt field back to just its locked rules — draft each wall fresh from there">Save scene</button>
+        <button class="btn ghost small" id="syncBtn" title="Pull the scene and prompts Claude already wrote in the /tri-wall chat, instead of typing them here">Sync from chat</button>
+      </div>
+      <div class="statusline" id="syncStatus"></div>
+      <div class="prompt-tag">Reference image <span style="text-transform:none;letter-spacing:0;">— center wall; left &amp; right pivot off this</span></div>
+      <label class="dropzone" id="refdz-center" style="aspect-ratio:auto;height:100px;">
+        <div class="dz-content" id="refdzcontent-center"><span>Drop the center reference image here</span></div>
+        <input type="file" id="reffile-center" accept="image/*">
+        <button type="button" class="dz-remove" id="refdzremove-center" style="display:none;" title="Remove image">✕</button>
+      </label>
+    </div>
+    <div class="card" id="scenePreviewCard" style="display:none;">
+      <h2>Centre wall <span class="sub">what option B is building</span></h2>
+      <div id="scenePreview"></div>
+      <div class="statusline" id="scenePreviewNote"></div>
+    </div>
+  </div>
   <div class="statusline" id="genLeftRightStatus"></div>
   <div class="cols3" id="imageWalls"></div>
 
@@ -1075,6 +1086,9 @@ async function refreshFromState(){
     restoreGenState('img', w.id, st.genImageStatus, st.genImageUrl);
   });
   refreshApproveWaiting();
+  // Keep the centre preview beside the Scene card in step with the wall it
+  // mirrors, so it fills in on its own when the centre finishes generating.
+  try { renderScenePreview(); } catch (e) {}
   WALLS.forEach(w => {
     const st = state.walls[w.id];
     const rp = document.getElementById(`refineprompt-${w.id}`);
@@ -3121,6 +3135,9 @@ document.getElementById('saveSceneBtn').addEventListener('click', async () => {
       if (el) delete el.dataset.userEdited;
     });
     await refreshFromState();
+    // The preview opens on save: before that there is nothing to look at.
+    sceneSaved = true;
+    renderScenePreview();
     statusEl.className = 'statusline ok';
     statusEl.textContent = 'Saved. All prompts reset to just their fixed rules — use the draft button on each wall to add scene-specific content, then Generate.';
   } catch (e) {
@@ -4577,6 +4594,56 @@ function applyImageDisclosure(mode){
   if (scene) scene.style.display = mode === 'text' ? '' : 'none';
   const dropHint = document.getElementById('centreDropHint');
   if (dropHint) dropHint.style.display = mode === 'image' ? '' : 'none';
+  renderScenePreview();
+}
+
+// THE CENTRE PREVIEW, beside the Scene card. Option B writes the centre from
+// text and every other wall is derived from it, so the one thing worth seeing
+// while drafting is what the centre currently looks like. It appears once the
+// scene has been saved - before that there is nothing to preview and an empty
+// panel is just noise - and it tracks the centre wall from then on: the
+// generated image when there is one, the uploaded reference otherwise.
+let sceneSaved = false;
+function renderScenePreview(){
+  const card = document.getElementById('scenePreviewCard');
+  const box = document.getElementById('scenePreview');
+  const note = document.getElementById('scenePreviewNote');
+  if (!card || !box) return;
+  const inTextMode = (document.getElementById('sceneCard') || {}).style
+    && document.getElementById('sceneCard').style.display !== 'none';
+  if (!inTextMode || !(sceneSaved || (state.scene || '').trim())) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  const src = wallImageSrc('center');
+  const st = state.walls.center || {};
+  if (src) {
+    box.innerHTML = '';
+    const a = document.createElement('a');
+    a.href = src; a.target = '_blank'; a.rel = 'noopener';
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = 'centre wall';
+    img.style.cssText = 'width:100%;border-radius:6px;display:block;border:1px solid var(--line);';
+    a.appendChild(img); box.appendChild(a);
+    note.className = 'statusline';
+    note.textContent = st.genImageUrl
+      ? 'Generated centre. The left and right walls are built from this.'
+      : 'Uploaded reference. Generate the centre to replace it.';
+  } else {
+    box.innerHTML = '';
+    const ph = document.createElement('div');
+    ph.style.cssText = 'aspect-ratio:16/9;border:1px dashed var(--line);border-radius:6px;'
+      + 'display:flex;align-items:center;justify-content:center;color:var(--muted-dim);'
+      + 'font-family:var(--mono);font-size:11px;text-align:center;padding:10px;';
+    ph.textContent = st.genImageStatus === 'running'
+      ? 'generating the centre…'
+      : 'Nothing on the centre wall yet — generate it below and it appears here.';
+    box.appendChild(ph);
+    note.className = 'statusline';
+    note.textContent = '';
+  }
 }
 
 
