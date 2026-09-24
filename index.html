@@ -981,6 +981,16 @@ let rigState = null;
 // in journey order). Cached here so the timeline table renders the SAME numbers
 // the prompts carry rather than a second guess at them.
 let elementPlanCache = null;
+// Has Save scene been pressed this session? Declared HERE, with the other
+// module-level state, and not next to renderScenePreview where it started.
+// setMode() runs during page load, calls applyImageDisclosure() and so
+// renderScenePreview(), which reads this - and a `let` further down the file is
+// still in its temporal dead zone at that point. The read threw, and because it
+// threw during load it took every line after it with it: about two thousand of
+// them, including most of the page's wiring. The only visible symptom was Save
+// scene later reporting "cannot access 'sceneSaved' before initialization",
+// because that handler had been attached before the throw.
+let sceneSaved = false;
 
 // A dead server and a failing API call are completely different problems, and
 // until now both surfaced as the browser's bare "Failed to fetch" — which then
@@ -4603,21 +4613,26 @@ function applyImageDisclosure(mode){
 // scene has been saved - before that there is nothing to preview and an empty
 // panel is just noise - and it tracks the centre wall from then on: the
 // generated image when there is one, the uploaded reference otherwise.
-let sceneSaved = false;
 function renderScenePreview(){
   const card = document.getElementById('scenePreviewCard');
   const box = document.getElementById('scenePreview');
   const note = document.getElementById('scenePreviewNote');
   if (!card || !box) return;
-  const inTextMode = (document.getElementById('sceneCard') || {}).style
-    && document.getElementById('sceneCard').style.display !== 'none';
-  if (!inTextMode || !(sceneSaved || (state.scene || '').trim())) {
+  // `state` is null until the first /api/state lands, and setMode() calls this
+  // during page load - well before that. Reading state.scene here threw exactly
+  // the way the sceneSaved `let` did, and with the same consequence: a load-time
+  // exception takes every line after it down with it. Anything this function
+  // touches has to survive a null state.
+  const sc = document.getElementById('sceneCard');
+  const inTextMode = !!sc && sc.style.display !== 'none';
+  const st = (state && state.walls && state.walls.center) || {};
+  const sceneText = ((state && state.scene) || '').trim();
+  if (!inTextMode || !(sceneSaved || sceneText)) {
     card.style.display = 'none';
     return;
   }
   card.style.display = '';
-  const src = wallImageSrc('center');
-  const st = state.walls.center || {};
+  const src = state ? wallImageSrc('center') : null;
   if (src) {
     box.innerHTML = '';
     const a = document.createElement('a');
