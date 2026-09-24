@@ -28,6 +28,8 @@ function stub(name) {
     get(t, k) {
       if (k === Symbol.toPrimitive) return () => '';
       if (k === 'then') return undefined;                 // not a thenable
+      if (k === 'insertAdjacentHTML') return (_pos, markup) => learnIds(markup);
+      if (k === 'append' || k === 'prepend') return () => {};
       if (k === Symbol.iterator) return function* () {};  // spreads/for..of
       if (k === 'length') return 0;
       if (k === 'toString') return () => '';
@@ -35,7 +37,7 @@ function stub(name) {
       if (k in t && typeof t[k] !== 'undefined' && k !== 'name') return t[k];
       return stub(name + '.' + String(k));
     },
-    set() { return true; },
+    set(_t, k, v) { if (k === 'innerHTML' || k === 'outerHTML') learnIds(v); return true; },
     apply() { return stub(name + '()'); },
     has() { return true; },
   });
@@ -70,8 +72,15 @@ function parseTopLevel(html) {
   return out;
 }
 function el(id, cls) {
+  let _id = id || '';
+  if (_id) IDS.add(_id);
   const node = {
-    id: id || '', hidden: false, style: {}, dataset: {}, type: '', textContent: '',
+    // Setting .id on a created element registers it, the same way attaching it
+    // to the document would. buildTabs() builds its panels this way
+    // (p.id = 'tabpanel-' + t.id) and then looks them up by id afterwards.
+    get id() { return _id; },
+    set id(v) { _id = v; if (v) IDS.add(v); },
+    hidden: false, style: {}, dataset: {}, type: '', textContent: '',
     className: cls || '',
     classList: {
       _s: new Set((cls || '').split(/\s+/).filter(Boolean)),
@@ -82,8 +91,10 @@ function el(id, cls) {
     children: [], parentNode: null,
     appendChild(c) { c.parentNode = this; this.children.push(c); return c; },
     insertAdjacentElement(_pos, c) { c.parentNode = this; return c; },
-    insertAdjacentHTML() {},
+    insertAdjacentHTML(_pos, markup) { learnIds(markup); },
     addEventListener() {}, removeEventListener() {},
+    set innerHTML(v) { learnIds(v); },
+    get innerHTML() { return ''; },
     querySelector(sel) { return stub('el.querySelector(' + sel + ')'); },
     querySelectorAll() { return []; },
     prepend() {}, before() {}, after() {}, replaceWith() {}, closest() { return null; },
@@ -140,7 +151,11 @@ const sandbox = {
       // honest browser answer for ids that are absent, but it stops the script
       // at the first `el.innerHTML = ...` and the point here is to get all the
       // way DOWN the file looking for load-time throws.
-      if (k === 'getElementById') return () => stub('#el');
+      // null for an id that is NOT in the markup, exactly as a browser does.
+      // Returning a stub for every id made this blind to the one thing it most
+      // needs to catch: markup deleted while the code that reaches for it stays.
+      // That is a TypeError at load in a real browser, and it kills the page.
+      if (k === 'getElementById') return id => { if (!idExists(id)) MISSING.push(id); return idExists(id) ? stub('#' + id) : null; };
       if (k === 'createElement') return () => stub('el');
       if (k === 'addEventListener') return () => {};
       if (k === 'readyState') return 'complete';
@@ -151,6 +166,31 @@ const sandbox = {
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
 sandbox.self = sandbox;
+
+// Every id the markup actually defines, including ones inside the template
+// strings the page injects at runtime (LIBRARY_MARKUP, PLAYER_MARKUP, ...).
+const IDS = new Set();
+const MISSING = [];
+for (const m of html.matchAll(/id=["'`]([^"'`${]+)["'`]/g)) IDS.add(m[1]);
+
+// Ids the page CREATES at runtime are learned from the markup it injects,
+// rather than guessed from the template that produced them.
+//
+// The first attempt turned `id="${kind}dz-${id}"` into /^.+dz-.+$/ and called
+// any match present. That regex matched refdz-center - a dropzone that had been
+// deleted from the page while the line wiring it stayed behind - so the check
+// said the id existed, handed back a stub, and saw nothing. In the browser that
+// getElementById returned null, .addEventListener threw at top level, init()
+// never ran and the whole page rendered as one scroll.
+//
+// So nothing is inferred. When the page assigns innerHTML or calls
+// insertAdjacentHTML, the ids in that markup are registered exactly as a browser
+// would create them, and an id nobody ever creates stays missing.
+function learnIds(markup) {
+  if (typeof markup !== 'string') return;
+  for (const m of markup.matchAll(/id=["'`]([^"'`${]+)["'`]/g)) IDS.add(m[1]);
+}
+function idExists(id) { return IDS.has(id); }
 
 const WRAP = el('', 'wrap');
 parseTopLevel(html).forEach(c => WRAP.appendChild(el(c.id, c.cls)));
@@ -163,6 +203,8 @@ try {
   const tab = errors.find(e => /tab layout failed/.test(e));
   if (tab) { failed = true; console.log('  TAB LAYOUT BROKEN: ' + tab); }
   else { console.log('  tab layout built'); }
+  if (MISSING.length) console.log('  ids asked for but never created: '
+    + [...new Set(MISSING)].slice(0, 12).join(', '));
   errors.filter(e => !/tab layout failed/.test(e)).slice(0, 4)
         .forEach(e => console.log('  (console.error) ' + e.slice(0, 120)));
 } catch (e) {

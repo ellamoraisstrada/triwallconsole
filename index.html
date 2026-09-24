@@ -5422,7 +5422,14 @@ WALLS.forEach(w => {
   });
 });
 
-wireDropzone('ref', 'center');
+// wireDropzone('ref', 'center') stood here. It wired the centre reference
+// dropzone in the Scene card - refdz-center / reffile-center - which was
+// removed because it did nothing and contradicted option B. The wiring stayed
+// behind, and getElementById returned null, so this threw at TOP LEVEL: the
+// script died before init() ran, buildTabs() was never called, and the whole
+// page rendered as one scroll. The earlier grep for who used that dropzone
+// missed this line because the ids are built from a template (`${kind}dz-${id}`)
+// and never appear literally anywhere.
 
 function preferDefault(selectEl, models, preferredJst){
   if (models.some(m => m.job_type === preferredJst)) selectEl.value = preferredJst;
