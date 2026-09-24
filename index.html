@@ -585,67 +585,13 @@ td.winspan.bad { color:var(--danger); }
       </label>
       <button class="btn small" id="draftVideoPromptsBtn" title="Have Claude write each wall's ambient-motion description by looking at that wall's own reference image — doesn't generate video, just drafts text for you to review">Draft in-scene motion — all 3 walls</button>
     </div>
-  <div id="decodeSection" style="display:none;">
-  <div class="section-head">
-    <h2><span class="stepno">3A</span>Decoder <span class="sub">measure the centre clip, match it to a rig move, write it into the side rules</span></h2>
-  </div>
-  <div class="card" style="margin-bottom:26px;">
-    <p style="margin:0;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;">
-      Drop a client clip (blockout, animatic, previz, or a finished piece) and it gets measured, not guessed at:
-      optical flow per view, split into a <strong>common-mode</strong> component (the whole rig rotated — a pan)
-      and a <strong>differential</strong> component (content spreading outward on the sides — a forward move).
-      That separation is what yields degrees-per-second for a turn and a push rate for a dolly, and it is why the
-      side walls can compensate correctly instead of copying the centre. A still image has no motion to measure —
-      it decodes as <em>hold</em>, and you pick the rig intent yourself.
-    </p>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
-      <button class="btn small" id="pickVideoBtn">Choose a video file…</button>
-      <span style="font-family:var(--mono);font-size:10.5px;color:var(--muted-dim);">
-        .mp4 / .mov / .webm — or drag one onto the panel below. No still image needed.
-      </span>
-    </div>
-    <label class="dropzone" id="decodedz" style="aspect-ratio:auto;height:92px;">
-      <div class="dz-content" id="decodedzcontent"><span>Drop a reference VIDEO here</span></div>
-      <input type="file" id="decodefile" accept="video/*,image/*">
-    </label>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <span style="font-family:var(--mono);font-size:10.5px;color:var(--muted-dim);">or decode a wall's own video:</span>
-      <button class="btn ghost small" data-decode-wall="center">Centre</button>
-      <button class="btn ghost small" data-decode-wall="left">Left</button>
-      <button class="btn ghost small" data-decode-wall="right">Right</button>
-      <span id="decodeWallNote" style="font-family:var(--mono);font-size:10.5px;color:var(--muted-dim);"></span>
-    </div>
-    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
-      <div class="f" style="display:flex;flex-direction:column;gap:5px;">
-        <label style="font-family:var(--mono);font-size:9.5px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;">Panels</label>
-        <select id="decodePanels" style="width:auto;" title="A 3-panel plate is a stitched tri-wall canvas. A normal client clip is 1 panel — auto picks by aspect ratio.">
-          <option value="auto">Auto-detect</option>
-          <option value="1">1 — single client view</option>
-          <option value="3">3 — stitched tri-wall plate</option>
-        </select>
-      </div>
-      <div class="f" style="display:flex;flex-direction:column;gap:5px;">
-        <label style="font-family:var(--mono);font-size:9.5px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;" title="Degrees cannot be recovered from pixels alone. Wall-to-wall RATIOS are exact regardless; the absolute degree figure is only as good as this number.">Assumed H-FOV°</label>
-        <input type="number" id="decodeFov" value="60" min="10" max="150" step="1"
-          style="width:74px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:8px;border-radius:2px;">
-      </div>
-      <button class="btn small" id="decodeBtn" disabled>Decode</button>
-      <button class="btn ghost small" id="decodeApplyBtn" disabled title="Overwrite the rig spec below with what was measured">Apply to rig</button>
-    </div>
-    <div class="statusline" id="decodeStatus"></div>
-    <dl class="metrics" id="decodeMetrics" style="display:none;"></dl>
-    <div id="decodeMatch" style="display:none;"></div>
-  </div>
-
-
-  </div><!-- /decodeSection -->
+  <!-- The Decoder (step 3A) stood here and was removed at the owner's request: it
+       was never used on this show. /api/decode and /api/decode-wall-video went
+       with it, along with its whole client block; see server.js. -->
   </div>
   <div class="modepick" id="videoSourceMode">
     <button class="modebtn active" data-vmode="text">
       <b>A · Pick a preset camera path</b><span>No clip. Choose one of the C_ rig moves measured from our own nDisplay renders, and Apply writes it into all three walls.</span>
-    </button>
-    <button class="modebtn" data-vmode="decoded">
-      <b>B · Decode a client clip</b><span>Upload the centre wall video. It is measured, matched against our C_ reference renders, and Apply writes that move into all three walls.</span>
     </button>
   </div>
   <div class="modehint" id="videoModeHint"></div>
@@ -3391,15 +3337,10 @@ const IMAGE_MODE_HINT = {
        + '"Generate left & right" extends it outward. Nothing needs uploading.',
   image: 'Drop your centre frame on the centre wall below (or on the Scene card’s reference slot), '
        + 'then "Generate left & right" builds the two extensions from it.',
-  video: 'Drop the client clip on the decode slot below and press Decode. It measures the camera move, '
-       + 'the grade and the eyeline, and every prompt from then on quotes those numbers — then '
-       + '"Generate left & right" extends the centre using them.',
+  video: 'Pick a preset camera path in the rig panel below, press Apply preset, then generate '
+       + 'each wall.',
 };
 const VIDEO_MODE_HINT = {
-  decoded: 'Upload the centre wall clip below and press Decode. The tool measures the camera, matches it '
-         + 'to the closest rig move and reports how sure it is — a fade, dissolve or cut is discarded '
-         + 'rather than measured as motion. What it finds is written into the LEFT and RIGHT locked rules, '
-         + 'so with a client centre you keep theirs and generate only the two sides.',
   text:    'No clip. Choose what the camera does below and it is applied to the three approved stills. The '
          + 'side walls still derive from the centre by the same principles — you are only choosing '
          + 'the one move.',
@@ -3432,16 +3373,11 @@ function setMode(group, value, persist){
     api('/api/model-choice', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ imageSourceMode: value }) }).catch(() => {});
   } else {
-    // Rig controls are a manual choice; with a decoded reference they are read
-    // back from the measurement instead, so leave them visible but say so.
-    // The decoder belongs to video generation: shown only when the motion is
-    // meant to come from a reference clip.
-    const dz = document.getElementById('decodeSection');
-    if (dz) dz.style.display = value === 'decoded' ? '' : 'none';
+    // The rig controls are always a manual choice now: the Decoder, and the
+    // 'decoded' mode that used to read these back off a measurement, are gone.
     const bar = document.getElementById('rigbarNote');
-    const barText = value === 'decoded'
-      ? 'These are filled in from the decoded reference — change them only to override what was measured.'
-      : 'Choose what the physical camera does. All three walls are derived from this one choice.';
+    const barText = 'Choose what the physical camera does. All three walls are derived from this '
+                  + 'one choice.';
     if (bar) bar.textContent = '';
     logNote('Video \u00b7 mode', barText, 'rigbarnote');
   }
@@ -3482,7 +3418,7 @@ function renderPreflight(d){
     const switchBtn = (c.id === 'higgsfield' && (c.canLogin || c.canLogout))
       ? `<button class="btn ghost small" data-login="${c.id}" data-switch="1" title="Signs this app out and opens Higgsfield sign-in in a private browser window, so you pick the account instead of the browser reusing the one it is already signed in as">Switch account</button>` : '';
     const testBtn = c.canTest
-      ? `<button class="btn ghost small" data-test="${c.id}" title="Makes one real call (~$0.06) to prove sign-in actually works">Test</button>` : '';
+      ? `<button class="btn ghost small" data-test="${c.id}" title="Makes one real call to prove sign-in actually works">Test</button>` : '';
     const installBtn = c.canInstall
       ? `<button class="btn small" data-install="${c.id}" title="Runs npm i -g @higgsfield/cli for you">Install</button>` : '';
     const logoutBtn = c.canLogout
@@ -3872,188 +3808,14 @@ document.getElementById('rigDuration').addEventListener('change', () => {
     refreshPresetDebug().catch(() => {});
   }));
 
-// ================= DECODE A REFERENCE =================
-let decodedMediaPath = null;
-let lastDecode = null;
-
+// metricTile stays: the CALIBRATION panel renders with it too. Everything else
+// that lived here - decodedMediaPath, lastDecode, renderDecodeMetrics,
+// wireDecodeDropzone, runDecode and their handlers - went with the Decoder.
+// Those handlers bound to elements that no longer exist, so leaving them would
+// have thrown on page load and taken every later listener down with them.
 function metricTile(label, value, sub, cls){
   return `<div><dt>${label}</dt><dd class="${cls||''}">${value}${sub?`<small>${sub}</small>`:''}</dd></div>`;
 }
-
-function renderDecodeMetrics(d){
-  const m = d.probe.motion || {};
-  const p = d.probe.panels || {};
-  const tiles = [];
-  tiles.push(metricTile('Detected move', (m.intent||'—').replace(/_/g,' '),
-    d.probe.kind === 'image' ? 'still image — no motion' : `${d.probe.panel_mode||''} · ${d.probe.duration_s||'?'}s`));
-  if (m.yaw_deg_per_s != null) tiles.push(metricTile('Yaw', `${m.yaw_deg_per_s.toFixed(2)}°/s`,
-    `≈${Math.round(Math.abs(m.yaw_deg_per_s)*(d.probe.duration_s||5))}° over the clip`));
-  if (m.pitch_deg_per_s != null) tiles.push(metricTile('Tilt', `${m.pitch_deg_per_s.toFixed(2)}°/s`, 'pitch rate'));
-  if (m.push_rate_pct_per_s != null) tiles.push(metricTile('Push rate', `${m.push_rate_pct_per_s.toFixed(1)}%/s`,
-    'frame expansion — UE5 reference 7.8'));
-  if (m.parallax_near_minus_far != null) tiles.push(metricTile('Parallax', m.parallax_near_minus_far.toFixed(3),
-    m.is_zoom_not_move ? 'ZOOM, not a real move' : 'near/far separate — real move',
-    m.is_zoom_not_move ? 'bad' : 'good'));
-  if (m.lr_symmetry_ratio != null) tiles.push(metricTile('L/R symmetry', m.lr_symmetry_ratio.toFixed(2),
-    'target 1.06', Math.abs(m.lr_symmetry_ratio-1.06) <= 0.25 ? 'good' : 'warn'));
-  ['LEFT','CENTER','RIGHT'].forEach(k => { if (p[k]) tiles.push(metricTile(`${k} dx`, p[k].dx_bg.toFixed(3),
-    `parallax ${p[k].parallax.toFixed(3)} · radial ${p[k].radial.toFixed(3)}`)); });
-  if (d.probe.elements) {
-    const e = d.probe.elements;
-    tiles.push(metricTile('Travelling element', `${e.rate_pct_per_s}%/s`,
-      `${e.span_pct}% span · ${e.per_wall_s}s per wall · ${e.direction.replace(/_/g,'-')}`, 'good'));
-  }
-  const el = document.getElementById('decodeMetrics');
-  el.innerHTML = tiles.join('');
-  el.style.display = 'grid';
-  // The match verdict: grade, eyeline and motion together. A set can have
-  // perfectly good camera motion and still be unusable because one wall is
-  // colder or its horizon steps at the seam — motion alone never caught that.
-  const mm = d.probe.match;                 // `m` is already the motion block above
-  const box = document.getElementById('decodeMatch');
-  if (!box) return;
-  if (!mm) { box.innerHTML = ''; box.style.display = 'none'; return; }
-  box.style.display = 'block';
-  if (mm.ok) {
-    box.className = 'callout-ok';
-    box.innerHTML = `<strong>Walls match.</strong> Grade, eyeline and motion are all inside tolerance.`;
-  } else {
-    box.className = 'callout-bad';
-    box.innerHTML = `<strong>These walls will NOT stitch — ${mm.issues.length} problem(s):</strong><ul style="margin:7px 0 0;padding-left:18px;">`
-      + mm.issues.map(i => `<li>${i}</li>`).join('') + `</ul>`;
-  }
-}
-
-function wireDecodeDropzone(){
-  const dz = document.getElementById('decodedz');
-  const input = document.getElementById('decodefile');
-  ['dragover','dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
-  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
-  dz.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) uploadRef(f); });
-  input.addEventListener('change', () => { const f = input.files[0]; if (f) uploadRef(f); });
-}
-
-// Raw binary PUT rather than base64-in-JSON: a client blockout clip is
-// routinely hundreds of MB and base64 inflates it by a third before it even
-// hits the body cap.
-async function uploadRef(file){
-  const st = document.getElementById('decodeStatus');
-  st.className = 'statusline';
-  st.textContent = `Uploading ${file.name} (${(file.size/1048576).toFixed(1)} MB)…`;
-  try {
-    // A dropped VIDEO is also attached to the centre wall as its motion
-    // reference, so the "Centre" decode button can re-decode it later without
-    // another upload. An image is not attached — there is nothing to decode
-    // from a still.
-    const isVideo = /^video\//.test(file.type) || /\.(mp4|mov|webm|m4v)$/i.test(file.name);
-    const res = await fetch('/api/upload-ref', {
-      method: 'POST',
-      headers: Object.assign(
-        { 'Content-Type': 'application/octet-stream', 'X-Filename': file.name },
-        isVideo ? { 'X-Wall': 'center' } : {}),
-      body: file,
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'upload failed');
-    decodedMediaPath = data.path;
-    const isVid = /\.(mp4|mov|webm|m4v)$/i.test(data.filename);
-    document.getElementById('decodedzcontent').innerHTML = isVid
-      ? `<video src="${data.url}" style="width:100%;height:100%;object-fit:cover;" muted></video>`
-      : `<img src="${data.url}">`;
-    document.getElementById('decodeBtn').disabled = false;
-    st.className = 'statusline ok';
-    st.textContent = `${data.filename} uploaded — click Decode.`;
-  } catch (e) {
-    st.className = 'statusline';
-    st.innerHTML = `<span class="error-text">${e.message}</span>`;
-  }
-}
-
-async function runDecode(apply){
-  if (!decodedMediaPath) return;
-  const st = document.getElementById('decodeStatus');
-  const btn = document.getElementById('decodeBtn');
-  btn.disabled = true;
-  st.className = 'statusline';
-  st.textContent = 'Measuring optical flow — a long clip takes a while…';
-  try {
-    const data = await api('/api/decode', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ mediaPath: decodedMediaPath, fov: parseFloat(document.getElementById('decodeFov').value)||60,
-        panels: document.getElementById('decodePanels').value === 'auto' ? undefined : document.getElementById('decodePanels').value,
-        apply: !!apply }) });
-    lastDecode = data;
-    renderDecodeMetrics(data);
-    document.getElementById('decodeApplyBtn').disabled = false;
-    if (apply) { writeRigToForm(data.derived); applyRigResponse(data); }
-    st.className = 'statusline ok';
-    st.textContent = apply
-      ? `Decoded and applied — rig is now: ${data.summary}`
-      : `Decoded: ${data.summary}. Click "Apply to rig" to adopt it.`;
-  } catch (e) {
-    st.className = 'statusline';
-    st.innerHTML = `<span class="error-text">${e.message}</span>`;
-  } finally { btn.disabled = false; }
-}
-const pickBtn = document.getElementById('pickVideoBtn');
-if (pickBtn) pickBtn.addEventListener('click', (e) => {
-  e.preventDefault();
-  document.getElementById('decodefile').click();
-});
-document.getElementById('decodeBtn').addEventListener('click', () => runDecode(false));
-// Apply the LAST decode without re-measuring. The old handler called
-// runDecode(true), which re-ran the whole probe and only worked when the clip
-// had come from the upload box — so after decoding a wall's own video the
-// button silently did nothing, and switching clips never updated the rig.
-document.getElementById('decodeApplyBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('decodeApplyBtn');
-  const st = document.getElementById('decodeStatus');
-  if (!lastDecode || !lastDecode.derived) {
-    st.className = 'statusline';
-    st.innerHTML = `<span class="error-text">Nothing decoded yet — press Decode first.</span>`;
-    return;
-  }
-  btn.disabled = true;
-  try {
-    // Push the decoded spec through the normal rig endpoint so state, the
-    // locked rules and the form all move together.
-    const d = await api('/api/rig', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ rig: lastDecode.derived }) });
-    writeRigToForm(d.rig || lastDecode.derived);
-    applyRigResponse(d);
-    st.className = 'statusline ok';
-    st.textContent = `Applied — rig is now: ${d.summary}. All five wall paths updated in the locked rules.`;
-  } catch (e) {
-    st.className = 'statusline';
-    st.innerHTML = `<span class="error-text">${e.message}</span>`;
-  } finally { btn.disabled = false; }
-});
-
-// Decode a wall's OWN video with no upload and no still image — the common
-// case once a centre video exists, or when a client clip has been attached.
-document.addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-decode-wall]');
-  if (!btn) return;
-  const wall = btn.dataset.decodeWall;
-  const st = document.getElementById('decodeStatus');
-  btn.disabled = true;
-  st.className = 'statusline';
-  st.textContent = `Reading the ${wall} wall's video and measuring its camera move…`;
-  try {
-    const d = await api('/api/decode-wall-video', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ wall, fov: parseFloat(document.getElementById('decodeFov').value) || 60, apply: true }) });
-    lastDecode = d;
-    renderDecodeMetrics(d);
-    writeRigToForm(d.derived);
-    applyRigResponse(d);
-    document.getElementById('decodeApplyBtn').disabled = false;
-    document.getElementById('decodeWallNote').textContent = `source: ${d.origin}`;
-    st.className = 'statusline ok';
-    st.textContent = `Decoded from the ${wall} wall — rig is now: ${d.summary}`;
-  } catch (err) {
-    st.className = 'statusline';
-    st.innerHTML = `<span class="error-text">${err.message}</span>`;
-  } finally { btn.disabled = false; }
-});
 
 // One click: animate both side walls' existing photos under the current rig.
 
@@ -5146,12 +4908,11 @@ async function improvePrompt(kind, id){
     if (kind === 'refine') updateRefineGenerateEnabled(id);
     else if (kind === 'vidrefine') updateVidRefineGenerateEnabled(id);
     else updateGenerateEnabled(id);
-    const costNote = typeof result.costUsd === 'number' ? ` (~$${result.costUsd.toFixed(3)})` : '';
     statusEl.className = 'statusline ok';
     if (result.notes) {
       statusEl.textContent = '';
       const strong = document.createElement('div');
-      strong.textContent = `Improved${costNote}.`;
+      strong.textContent = `Improved.`;
       const note = document.createElement('div');
       note.className = 'statusline';
       note.style.marginTop = '2px';
@@ -5159,7 +4920,7 @@ async function improvePrompt(kind, id){
       statusEl.appendChild(strong);
       statusEl.appendChild(note);
     } else {
-      statusEl.textContent = `Improved${costNote}.`;
+      statusEl.textContent = `Improved.`;
     }
   } catch (e) {
     statusEl.innerHTML = `<span class="error-text">${e.message}</span>`;
@@ -5641,7 +5402,6 @@ async function verifyBuild(){
   // kind of uncaught init failure.
   initCollapse();
   loadPreflight().catch(() => {});
-  wireDecodeDropzone();
   await rigRulesReady;
   if (window.__rigRulesError) {
     // No fallback exists any more, and that is deliberate: there is no safe

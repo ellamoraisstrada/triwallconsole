@@ -3124,148 +3124,16 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
     }
 
     // ---- decode: reverse-engineer a client reference into a rig spec ----
-    if (req.method === 'POST' && p === '/api/decode') {
-      const body = JSON.parse((await readBody(req)).toString('utf8'));
-      const { mediaPath, fov, panels, crop, apply } = body;
-      if (!mediaPath || !fs.existsSync(mediaPath)) return sendJson(res, 400, { error: 'mediaPath not found' });
-      try {
-        const probe = await runProbe(mediaPath, { fov, panels, crop });
-        const derived = RIG.rigFromProbe(probe, state.rig || RIG.defaultRig());
-        // A 3-panel plate also tells us the grade to match. Adopt the CENTRE
-        // wall's measured lighting as the reference the locked grade rule
-        // quotes — this is what stops a side wall coming back 50 points cooler.
-        const cg = probe.panels && probe.panels.CENTER && probe.panels.CENTER.grade;
-        if (cg) derived.gradeRef = cg;
-        // Keep the FULL per-wall reading, not just the centre's grade: the
-        // locked block quotes each side wall's own measured miss and the
-        // direction to correct it (buildMeasuredMatchRule). Measuring a set and
-        // then not telling the generator what the measurement said is what let
-        // the same faults repeat version after version.
-        // What the paths block cites. Only the CENTRE is ever needed: the room's
-        // geometry derives the other four (see rigpaths.js).
-        derived.measuredMotion = {
-          source: require('path').basename(mediaPath || 'reference'),
-          confidence: (probe.motion && probe.motion.confidence) || null,
-          yawDegPerSec: probe.motion && probe.motion.yaw_deg_per_s,
-          intent: probe.motion && probe.motion.intent,
-          at: new Date().toISOString(),
-        };
-        if (probe.panels && probe.panels.CENTER) {
-          derived.measured = {
-            at: new Date().toISOString(),
-            grades: Object.fromEntries(Object.entries(probe.panels)
-              .filter(([, v]) => v && v.grade).map(([k, v]) => [k, v.grade])),
-            horizons: Object.fromEntries(Object.entries(probe.panels)
-              .filter(([, v]) => v && v.horizon != null).map(([k, v]) => [k, v.horizon])),
-            motion: probe.motion || null,
-            issues: (probe.match && probe.match.issues) || [],
-          };
-        }
-        state.decoded = { at: new Date().toISOString(), mediaPath, probe, derived };
-        // Adopt the measured GRADE and eyeline regardless — those readings are
-        // sound even on a broken plate. But keep the previous camera INTENT when
-        // the probe says the intent reading cannot be trusted, rather than
-        // baking a misread rotation into every future prompt.
-        const trust = !probe.match || probe.match.intent_trustworthy !== false;
-        if (apply) {
-          const prev = state.rig || RIG.defaultRig();
-          const keptIntent = prev.intent, keptSpeed = prev.speedPct;
-          state.rig = derived;
-          if (!trust) {
-            // Speed is derived from the same flow measurement as the intent, so
-            // if the intent is untrustworthy the speed is too — restore both,
-            // not just the label.
-            state.rig.intent = keptIntent;
-            state.rig.speedPct = keptSpeed;
-            state.rig.speedInferred = false;
-            state.rig.intentRejected = derived.intent;
-            state.rig.speedRejected = derived.speedPct;
-          }
-          state.videoMotionMode = state.rig.intent === 'hold' ? 'idle' : 'moving';
-          if (derived.speedPct && trust) state.videoCameraSpeedPct = derived.speedPct;
-        }
-        saveState();
-        const applied = LEARN.applyCalibration(state.calibration, apply ? state.rig : derived);
-        return sendJson(res, 200, {
-          probe, derived, applied, summary: RIG.describeRig(applied),
-          rules: Object.fromEntries(WALL_IDS.map(w => [w, RIG.buildFixedVideoRules(w, applied)])),
-        locks: rigLockPayload(applied),
-        });
-      } catch (err) { return sendJson(res, 500, { error: err.message }); }
-    }
-
-    // Decode straight from a WALL's own video — no separate upload, and no
-    // still image involved at all. Source order: a video explicitly attached
-    // to the wall as a motion reference, else that wall's last generated
-    // video (downloaded from the CDN first, since the probe needs a local file).
-    if (req.method === 'POST' && p === '/api/decode-wall-video') {
-      const body = JSON.parse((await readBody(req)).toString('utf8'));
-      const wall = WALL_IDS.includes(body.wall) ? body.wall : 'center';
-      const st = state.walls[wall];
-      let mediaPath = st.refVideoPath && fs.existsSync(st.refVideoPath) ? st.refVideoPath : null;
-      let origin = mediaPath ? 'attached reference video' : null;
-      if (!mediaPath && st.genVideoUrl) {
-        try {
-          const dest = path.join(REFS_DIR, `${wall}-decode-${Date.now()}.mp4`);
-          await downloadFile(st.genVideoUrl, dest);
-          mediaPath = dest; origin = `${wall} wall's generated video`;
-        } catch (e) {
-          return sendJson(res, 500, { error: `Could not download ${wall}'s video: ${e.message}` });
-        }
-      }
-      if (!mediaPath) {
-        return sendJson(res, 400, { error:
-          `The ${wall} wall has no video to decode. Drop a reference clip on the decode slot, or generate ` +
-          `a ${wall} video first. A still image cannot be decoded — a camera move needs a clip.` });
-      }
-      try {
-        const probe = await runProbe(mediaPath, { fov: body.fov, panels: body.panels });
-        const derived = RIG.rigFromProbe(probe, state.rig || RIG.defaultRig());
-        // A 3-panel plate also tells us the grade to match. Adopt the CENTRE
-        // wall's measured lighting as the reference the locked grade rule
-        // quotes — this is what stops a side wall coming back 50 points cooler.
-        const cg = probe.panels && probe.panels.CENTER && probe.panels.CENTER.grade;
-        if (cg) derived.gradeRef = cg;
-        // Keep the FULL per-wall reading, not just the centre's grade: the
-        // locked block quotes each side wall's own measured miss and the
-        // direction to correct it (buildMeasuredMatchRule). Measuring a set and
-        // then not telling the generator what the measurement said is what let
-        // the same faults repeat version after version.
-        // What the paths block cites. Only the CENTRE is ever needed: the room's
-        // geometry derives the other four (see rigpaths.js).
-        derived.measuredMotion = {
-          source: require('path').basename(mediaPath || 'reference'),
-          confidence: (probe.motion && probe.motion.confidence) || null,
-          yawDegPerSec: probe.motion && probe.motion.yaw_deg_per_s,
-          intent: probe.motion && probe.motion.intent,
-          at: new Date().toISOString(),
-        };
-        if (probe.panels && probe.panels.CENTER) {
-          derived.measured = {
-            at: new Date().toISOString(),
-            grades: Object.fromEntries(Object.entries(probe.panels)
-              .filter(([, v]) => v && v.grade).map(([k, v]) => [k, v.grade])),
-            horizons: Object.fromEntries(Object.entries(probe.panels)
-              .filter(([, v]) => v && v.horizon != null).map(([k, v]) => [k, v.horizon])),
-            motion: probe.motion || null,
-            issues: (probe.match && probe.match.issues) || [],
-          };
-        }
-        state.decoded = { at: new Date().toISOString(), mediaPath, origin, probe, derived };
-        if (body.apply !== false) {
-          state.rig = derived;
-          state.videoMotionMode = derived.intent === 'hold' ? 'idle' : 'moving';
-          if (derived.speedPct) state.videoCameraSpeedPct = derived.speedPct;
-        }
-        saveState();
-        const applied = LEARN.applyCalibration(state.calibration, state.rig);
-        return sendJson(res, 200, {
-          probe, derived, applied, origin, summary: RIG.describeRig(applied),
-          rules: Object.fromEntries(WALL_IDS.map(w => [w, RIG.buildFixedVideoRules(w, applied)])),
-        locks: rigLockPayload(applied),
-        });
-      } catch (err) { return sendJson(res, 500, { error: err.message }); }
-    }
+    // THE DECODER IS GONE. /api/decode and /api/decode-wall-video lived here:
+    // upload a client clip (or point at a wall's own video), run motion_probe.py
+    // over it, match the result against the C_ reference library and write that
+    // move into the rig. Removed at the owner's request - the show picks a preset
+    // and the decoder was never used on it.
+    //
+    // runProbe() STAYS: /api/calibration and refreshCentreGradeRef() both use it,
+    // and so does the still-image grade reference. Only the two decode endpoints
+    // and their UI have gone. rig.rigFromProbe() also stays, unused by the server
+    // now but still the one place that knows how to turn a probe into a rig spec.
 
     // One click: write the per-wall ambient-motion text for LEFT and RIGHT so
     // their existing reference photos can be animated under the current rig.
