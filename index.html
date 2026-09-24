@@ -563,18 +563,19 @@ td.winspan.bad { color:var(--danger); }
   <div class="setup" id="sceneRow">
     <div class="card" id="sceneCard">
       <h2>Scene <span class="sub">describe the centre wall — option B only</span></h2>
-      <textarea id="sceneInput" placeholder="Describe the whole shot: what's in it, lighting, action, camera movement and timing. Click Save scene, then use each wall's own Draft button below to fill in its prompt."></textarea>
+      <textarea id="sceneInput" placeholder="Describe the CENTRE wall: what is in it, the lighting, the mood. Save scene makes this the centre's image prompt — then press Generate on the centre card below. Left and right are drafted from the finished centre, not from this text."></textarea>
       <div class="actions">
-        <button class="btn small" id="saveSceneBtn" title="Saves this text as the scene, and clears every wall's own prompt field back to just its locked rules — draft each wall fresh from there">Save scene</button>
+        <button class="btn small" id="saveSceneBtn" title="Makes this text the CENTRE wall's image prompt, then press Generate on the centre card below. Left and right are cleared — draft those from the finished centre image.">Save scene</button>
         <button class="btn ghost small" id="syncBtn" title="Pull the scene and prompts Claude already wrote in the /tri-wall chat, instead of typing them here">Sync from chat</button>
       </div>
       <div class="statusline" id="syncStatus"></div>
-      <div class="prompt-tag">Reference image <span style="text-transform:none;letter-spacing:0;">— center wall; left &amp; right pivot off this</span></div>
-      <label class="dropzone" id="refdz-center" style="aspect-ratio:auto;height:100px;">
-        <div class="dz-content" id="refdzcontent-center"><span>Drop the center reference image here</span></div>
-        <input type="file" id="reffile-center" accept="image/*">
-        <button type="button" class="dz-remove" id="refdzremove-center" style="display:none;" title="Remove image">✕</button>
-      </label>
+      <!-- A centre reference-image dropzone stood here. It had no JavaScript
+           wired to it at all - nothing read refdz-center or reffile-center -
+           and it lived inside the Scene card, which only shows under option B,
+           where the centre is generated ENTIRELY from the text. So it offered an
+           upload that did nothing and contradicted the option it appeared in.
+           Option A uploads through the centre wall card's own dropzone
+           (imgfile-center), which is the live path. -->
     </div>
     <div class="card" id="scenePreviewCard" style="display:none;">
       <h2>Centre wall <span class="sub">what option B is building</span></h2>
@@ -3128,10 +3129,22 @@ document.getElementById('saveSceneBtn').addEventListener('click', async () => {
     // up in center's or right's prompt too). Every editable field is reset
     // to blank; fill it in per-wall via Improve or by typing, if you want
     // something beyond the fixed rules.
+    // THE CENTRE'S IMAGE PROMPT IS THE SCENE. This card says "describe the
+    // centre wall - option B only", and option B generates that wall from text.
+    // But the scene was only ever stored as state.scene: the centre's own image
+    // field stayed empty, and Generate sends the locked house-style block plus
+    // that field. So pressing Generate after writing a scene sent a block that
+    // describes how to compose a photograph and nothing at all about what was
+    // in it - which is why it came back as an unrelated picture.
+    //
+    // The left and right fields are still cleared. They are extensions of the
+    // centre and get drafted from the finished centre image; copying the scene
+    // into them is how one wall's content leaks into another's.
     const jobs = [
       { wall:'left', mode:'video', text: '' },
       { wall:'center', mode:'video', text: '' },
       { wall:'right', mode:'video', text: '' },
+      { wall:'center', mode:'image', text: scene },
       { wall:'left', mode:'image', text: '' },
       { wall:'right', mode:'image', text: '' },
     ];
@@ -3140,7 +3153,8 @@ document.getElementById('saveSceneBtn').addEventListener('click', async () => {
     }
     // Clear the "don't overwrite my edit" flags so the fresh values actually
     // show — Save is meant to regenerate everything from the new scene.
-    ['imgprompt-left', 'imgprompt-right', 'vidprompt-left', 'vidprompt-center', 'vidprompt-right'].forEach(id => {
+    ['imgprompt-center', 'imgprompt-left', 'imgprompt-right',
+     'vidprompt-left', 'vidprompt-center', 'vidprompt-right'].forEach(id => {
       const el = document.getElementById(id);
       if (el) delete el.dataset.userEdited;
     });
@@ -3149,7 +3163,8 @@ document.getElementById('saveSceneBtn').addEventListener('click', async () => {
     sceneSaved = true;
     renderScenePreview();
     statusEl.className = 'statusline ok';
-    statusEl.textContent = 'Saved. All prompts reset to just their fixed rules — use the draft button on each wall to add scene-specific content, then Generate.';
+    statusEl.textContent = 'Saved — this text is now the CENTRE wall image prompt, so Generate on the '
+      + 'centre builds it. Left and right were cleared; draft those from the finished centre.';
   } catch (e) {
     statusEl.className = 'statusline';
     statusEl.innerHTML = `<span class="error-text">${e.message}</span>`;
@@ -4633,6 +4648,14 @@ function renderScenePreview(){
   }
   card.style.display = '';
   const src = state ? wallImageSrc('center') : null;
+  // IS THIS RENDER ACTUALLY OF THIS SCENE? The preview showed whatever was on
+  // the centre wall, so after writing a new description it presented the
+  // PREVIOUS scene's render as though it were the new one. The wall records
+  // when its image landed and /api/scene records when the text was written, so
+  // say which it is rather than letting the picture imply it.
+  const savedAt = state && state.sceneSavedAt ? Date.parse(state.sceneSavedAt) : 0;
+  const madeAt = st.genImageAt ? Date.parse(st.genImageAt) : 0;
+  const stale = !!src && savedAt && (!madeAt || madeAt < savedAt);
   if (src) {
     box.innerHTML = '';
     const a = document.createElement('a');
@@ -4641,11 +4664,15 @@ function renderScenePreview(){
     img.src = src;
     img.alt = 'centre wall';
     img.style.cssText = 'width:100%;border-radius:6px;display:block;border:1px solid var(--line);';
+    img.style.opacity = stale ? '0.45' : '1';
     a.appendChild(img); box.appendChild(a);
-    note.className = 'statusline';
-    note.textContent = st.genImageUrl
-      ? 'Generated centre. The left and right walls are built from this.'
-      : 'Uploaded reference. Generate the centre to replace it.';
+    note.className = stale ? 'statusline' : 'statusline ok';
+    note.textContent = stale
+      ? 'This is from BEFORE the description you just saved — not a render of it. '
+        + 'Press Generate on the centre wall to build the new one.'
+      : st.genImageUrl
+        ? 'Generated from this description. The left and right walls build from it.'
+        : 'Uploaded reference. Generate the centre to replace it.';
   } else {
     box.innerHTML = '';
     const ph = document.createElement('div');
@@ -4654,7 +4681,9 @@ function renderScenePreview(){
       + 'font-family:var(--mono);font-size:11px;text-align:center;padding:10px;';
     ph.textContent = st.genImageStatus === 'running'
       ? 'generating the centre…'
-      : 'Nothing on the centre wall yet — generate it below and it appears here.';
+      : 'Save scene only stores the text — it does not generate. Your description is now the '
+        + 'centre wall image prompt: press Generate on the centre card below and the result '
+        + 'appears here.';
     box.appendChild(ph);
     note.className = 'statusline';
     note.textContent = '';

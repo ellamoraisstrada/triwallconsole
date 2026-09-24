@@ -1248,7 +1248,7 @@ function pollJobInBackground(wall, mode, jobId, meta){
       const job = JSON.parse(statusRaw);
       if (TERMINAL_STATUSES.includes(job.status)) {
         const resultUrl = jobResultUrl(job);
-        if (mode === 'image') { state.walls[wall].genImageUrl = resultUrl; state.walls[wall].genImageStatus = resultUrl ? 'completed' : 'failed'; }
+        if (mode === 'image') { state.walls[wall].genImageUrl = resultUrl; state.walls[wall].genImageStatus = resultUrl ? 'completed' : 'failed'; state.walls[wall].genImageAt = resultUrl ? new Date().toISOString() : null; }
         else { state.walls[wall].genVideoUrl = resultUrl; state.walls[wall].genVideoStatus = resultUrl ? 'completed' : 'failed'; }
         recordInLibrary(state, { at: new Date().toISOString(), wall, kind: mode,
                                url: state.walls[wall][mode === 'image' ? 'genImageUrl' : 'genVideoUrl'],
@@ -1385,6 +1385,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/scene') {
       const body = JSON.parse((await readBody(req)).toString('utf8'));
       state.scene = body.text || '';
+      // WHEN it was written. Without this the centre preview cannot tell a
+      // render of THIS description from one left over on the wall by a previous
+      // scene, and it showed the stale one as though it were the new one.
+      state.sceneSavedAt = new Date().toISOString();
       saveState();
       return sendJson(res, 200, { ok: true });
     }
@@ -1677,7 +1681,7 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 200, { url: null, job, jobId, timedOut: true, moveUsed: moveUsedForJob,
             note: `Still rendering on Higgsfield past our own check-in window — normal for 4K video. Status will update to completed/failed automatically once it finishes; click "Sync from chat" or reload to check.` });
         }
-        if (mode === 'image') { state.walls[wall].genImageUrl = resultUrl; state.walls[wall].genImageStatus = resultUrl ? 'completed' : 'failed'; }
+        if (mode === 'image') { state.walls[wall].genImageUrl = resultUrl; state.walls[wall].genImageStatus = resultUrl ? 'completed' : 'failed'; state.walls[wall].genImageAt = resultUrl ? new Date().toISOString() : null; }
         else { state.walls[wall].genVideoUrl = resultUrl; state.walls[wall].genVideoStatus = resultUrl ? 'completed' : 'failed'; }
         if (resultUrl) {
           recordInLibrary(state, {
@@ -2728,6 +2732,7 @@ Put ONLY that description in "improved_prompt", in full, ending on a complete se
 
         state.walls[wall].genImageUrl = resultUrl;
         state.walls[wall].genImageStatus = resultUrl ? 'completed' : 'failed';
+        state.walls[wall].genImageAt = resultUrl ? new Date().toISOString() : null;
         if (resultUrl) {
           recordInLibrary(state, {
             at: new Date().toISOString(), wall, kind: 'image', url: resultUrl,

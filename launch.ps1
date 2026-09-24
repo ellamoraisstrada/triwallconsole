@@ -13,7 +13,32 @@
 # ===================================================================
 
 $ErrorActionPreference = 'Stop'
-Set-Location -Path $PSScriptRoot
+
+# ---- WHICH COPY OF THE CODE ----------------------------------------------
+# A second copy of this app lives in the handoff folder on G:, with its own
+# launcher. It drifted: on 2026-09-24 it was three days behind and would have
+# started a build with none of that week's camera fixes, plus a decoder and a
+# cost readout that had both been removed. Nothing kept it current, because it
+# is a plain file copy rather than a checkout.
+#
+# So the launcher prefers the working repo and runs THAT, wherever it is started
+# from. One copy of the code, one thing to keep right.
+#
+# It still falls back to its own folder if the repo is not there - this package
+# gets handed to other people and that path will not exist on their machines.
+# Whichever it picks it says so on screen, because "which build am I actually
+# running" is the question that started all this.
+$app = $env:TRIWALL_APP
+if ([string]::IsNullOrWhiteSpace($app)) { $app = 'C:\Users\XR-RN\triwallconsole' }
+if (-not (Test-Path (Join-Path $app 'server.js'))) { $app = $PSScriptRoot }
+Set-Location -Path $app
+
+# The scene, library and ratings stay with the folder this launcher was started
+# from, next to the uploads and reference clips they point at. Only the code
+# comes from elsewhere.
+if ([string]::IsNullOrWhiteSpace($env:TRIWALL_STATE)) {
+    $env:TRIWALL_STATE = (Join-Path $PSScriptRoot 'state.json')
+}
 
 $port = $env:TRIWALL_PORT
 if ([string]::IsNullOrWhiteSpace($port)) { $port = '8934' }
@@ -23,6 +48,13 @@ $Host.UI.RawUI.WindowTitle = "Tri-Wall Console"
 Write-Host ""
 Write-Host "  TRI-WALL CONSOLE" -ForegroundColor Cyan
 Write-Host "  ================" -ForegroundColor Cyan
+Write-Host ""
+if ($app -eq $PSScriptRoot) {
+    Write-Host "  code   this folder (no working repo found)" -ForegroundColor Yellow
+} else {
+    Write-Host ("  code   " + $app) -ForegroundColor Green
+}
+Write-Host ("  data   " + $env:TRIWALL_STATE)
 Write-Host ""
 
 # Is one already up? Reuse it rather than fighting for the port.
